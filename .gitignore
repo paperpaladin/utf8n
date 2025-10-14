@@ -1,0 +1,10 @@
+# downloaded Unicode Character Database (fetched by t/run.sh, not committed)
+ucd/
+ucd-*/
+# scratch space for test temporaries -- repo-local on purpose, /tmp is shared
+scratch/
+# build products
+*.o
+t/unit
+t/conform
+t/nfx
