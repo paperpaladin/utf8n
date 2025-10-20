@@ -10,12 +10,19 @@ ASAN     = -std=c11 -Wall -Wextra -Wpedantic -O1 -g \
 	   -fsanitize=address,undefined -fno-omit-frame-pointer \
 	   -ffile-prefix-map=$(CURDIR)=.
 
-.PHONY: all test test-asan clean
+.PHONY: all test test-asan gen-tables clean
 
 all: utf8n.o
 
-utf8n.o: utf8n.c utf8n.h
+utf8n.o: utf8n.c utf8n.h utf8n_table.h
 	$(CC) $(CFLAGS) -c -o $@ utf8n.c
+
+# Regenerates the tables from ucd/.  Deliberately NOT a build dependency: the
+# header is committed so that building utf8n needs gcc and nothing else, and
+# re-running this changes which Unicode version the answers are correct for.
+# t/run.sh fetches ucd/ when it is missing.
+gen-tables:
+	python3 tools/gen_tables.py ucd utf8n_table.h
 
 test: all
 	CC='$(CC)' CFLAGS='$(CFLAGS)' ./t/run.sh

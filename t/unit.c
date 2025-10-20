@@ -112,8 +112,42 @@ static void t_utf8(void)
 	}
 }
 
+static void t_ccc(void)
+{
+	static const struct { uint32_t cp; int ccc; } cases[] = {
+		{0x0041, 0},	/* LATIN CAPITAL LETTER A, a starter */
+		{0x0334, 1},	/* COMBINING TILDE OVERLAY */
+		{0x093C, 7},	/* DEVANAGARI SIGN NUKTA */
+		{0x3099, 8},	/* COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK */
+		{0x05B0, 10},	/* HEBREW POINT SHEVA */
+		{0x064B, 27},	/* ARABIC FATHATAN */
+		{0x0E48, 107},	/* THAI CHARACTER MAI EK */
+		{0x0316, 220},	/* COMBINING GRAVE ACCENT BELOW */
+		{0x0591, 220},	/* HEBREW ACCENT ETNAHTA */
+		{0x302E, 224},	/* HANGUL SINGLE DOT TONE MARK */
+		{0x05AE, 228},	/* HEBREW ACCENT ZINOR */
+		{0x0301, 230},	/* COMBINING ACUTE ACCENT */
+		{0x1D167, 1},	/* MUSICAL SYMBOL COMBINING TREMOLO-1, astral */
+		{0x10FFFF, 0},
+	};
+	size_t i;
+	int bad = 0;
+
+	for (i = 0; i < sizeof cases / sizeof cases[0]; i++)
+		if (utf8n_ccc(cases[i].cp) != cases[i].ccc) {
+			printf("# ccc(U+%04X) = %d, want %d\n", cases[i].cp,
+			       utf8n_ccc(cases[i].cp), cases[i].ccc);
+			bad++;
+		}
+	ok(bad == 0, "Canonical_Combining_Class spot checks (%zu values)",
+	   sizeof cases / sizeof cases[0]);
+	ok(utf8n_ucd_version()[0] != 0, "tables declare a UCD version (%s)",
+	   utf8n_ucd_version());
+}
+
 int main(void)
 {
 	t_utf8();
+	t_ccc();
 	return failures != 0;
 }
