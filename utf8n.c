@@ -201,6 +201,35 @@ static void decompose(struct cpbuf *b, uint32_t cp, int compat)
 	cpbuf_push(b, cp);
 }
 
+/* --- canonical ordering ---------------------------------------------------
+ *
+ * UAX #15 defines this as "repeatedly swap any adjacent pair A B where
+ * ccc(A) > ccc(B) > 0".  An insertion sort that moves each non-starter left
+ * past strictly-greater classes is the same permutation and runs in one pass.
+ *
+ * The > is strict, which is the whole correctness argument: marks of equal
+ * class must keep their original order, because a+U+0300+U+0301 and
+ * a+U+0301+U+0300 are genuinely different text.  A sort with >= would still
+ * pass a test for "classes are ascending" while corrupting that, which is why
+ * the oracle to trust here is idempotence over a corpus and not a hand-written
+ * ordering check.  Starters have class 0 and so are never crossed.
+ */
+static void canonical_order(uint32_t *p, size_t n)
+{
+	size_t i, j;
+
+	for (i = 1; i < n; i++) {
+		uint32_t ch = p[i];
+		int cc = utf8n_ccc(ch);
+
+		if (cc == 0)
+			continue;
+		for (j = i; j > 0 && utf8n_ccc(p[j - 1]) > cc; j--)
+			p[j] = p[j - 1];
+		p[j] = ch;
+	}
+}
+
 size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		       char *out, size_t outcap)
 {
@@ -217,6 +246,7 @@ size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		free(b.p);
 		return (size_t)-1;
 	}
+	canonical_order(b.p, b.n);
 
 	for (k = 0; k < b.n; k++) {
 		unsigned char tmp[4];

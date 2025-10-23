@@ -4,6 +4,7 @@
  * Prints TAP-ish "ok - "/"not ok - " lines; t/run.sh counts them.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include "../utf8n.h"
@@ -171,6 +172,78 @@ static void eq(enum utf8n_form form, const char *in, const char *want,
 	ok(strcmp(got, want) == 0, "%s %s", fname[form], name);
 }
 
+#define NELEM(a) (sizeof(a) / sizeof(a)[0])
+
+/* Codepoint sequences are written as hex strings: combining marks are
+ * unreadable as UTF-8 escapes, and C macros cannot take brace lists. */
+static size_t parse_cps(const char *s, uint32_t *out, size_t cap)
+{
+	size_t n = 0;
+	char *end;
+
+	while (n < cap) {
+		unsigned long v = strtoul(s, &end, 16);
+		if (end == s)
+			break;
+		out[n++] = (uint32_t)v;
+		s = end;
+	}
+	return n;
+}
+
+static void eqcp(enum utf8n_form form, const char *name, const char *inhex,
+		 const char *wanthex)
+{
+	static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
+	uint32_t in[64], want[64], got[128];
+	char ibuf[256], obuf[1024];
+	size_t ni, nw, i, w = 0, n, r = 0, k;
+	int same;
+
+	ni = parse_cps(inhex, in, NELEM(in));
+	nw = parse_cps(wanthex, want, NELEM(want));
+	for (i = 0; i < ni; i++)
+		w += utf8n_encode(in[i], (unsigned char *)ibuf + w);
+	n = utf8n_normalize(form, ibuf, w, obuf, sizeof obuf);
+	same = n != (size_t)-1 && n <= sizeof obuf;
+	if (same) {
+		r = decode_all(obuf, n, got, NELEM(got));
+		same = r == nw;
+		for (k = 0; same && k < nw; k++)
+			same = got[k] == want[k];
+	}
+	if (!same) {
+		printf("# %s(%s) =", fname[form], inhex);
+		for (k = 0; k < r; k++)
+			printf(" %04X", got[k]);
+		printf(", want %s\n", wanthex);
+	}
+	ok(same, "%s %s", fname[form], name);
+}
+
+static void t_order(void)
+{
+	/* Three marks, all out of order, must come out 1 < 220 < 230. */
+	eqcp(UTF8N_NFD, "three marks reorder (230,220,1 -> 1,220,230)",
+	     "0061 0301 0316 0334", "0061 0334 0316 0301");
+	/* Four marks spanning four classes, reordered. */
+	eqcp(UTF8N_NFD, "four marks reorder (228,220,230,240)",
+	     "0061 05AE 0316 0301 0345", "0061 0316 05AE 0301 0345");
+	/* Equal classes must NOT be reordered: these two strings stay distinct. */
+	eqcp(UTF8N_NFD, "equal class keeps order (U+0301 U+0300)",
+	     "0061 0301 0300", "0061 0301 0300");
+	eqcp(UTF8N_NFD, "equal class keeps order (U+0300 U+0301)",
+	     "0061 0300 0301", "0061 0300 0301");
+	/* Ordering happens after decomposition, not before: U+1E0B is d with dot
+	 * above (230) and the trailing dot below (220) has to sort in front of
+	 * the mark that came out of the decomposition. */
+	eqcp(UTF8N_NFD, "mark from a decomposition is reordered",
+	     "1E0B 0323", "0064 0323 0307");
+	/* A starter resets the run: the second group sorts independently. */
+	eqcp(UTF8N_NFD, "a starter breaks the reordering run",
+	     "0061 0301 0334 0062 0301 0334", "0061 0334 0301 0062 0334 0301");
+}
+
 static void t_decompose(void)
 {
 	/* Canonical decomposition, cases that need no reordering. */
@@ -209,5 +282,6 @@ int main(void)
 	t_utf8();
 	t_ccc();
 	t_decompose();
+	t_order();
 	return failures != 0;
 }
