@@ -244,6 +244,26 @@ static void t_order(void)
 	     "0061 0301 0334 0062 0301 0334", "0061 0334 0301 0062 0334 0301");
 }
 
+static void t_hangul(void)
+{
+	/* LVT, LV, and the two ends of the block. */
+	eqcp(UTF8N_NFD, "U+AC01 -> L V T", "AC01", "1100 1161 11A8");
+	eqcp(UTF8N_NFD, "U+AC00 -> L V (no trailer)", "AC00", "1100 1161");
+	eqcp(UTF8N_NFD, "U+D7A3 (last syllable) -> L V T", "D7A3",
+	     "1112 1175 11C2");
+	/* One below and one above the block must be left alone.  U+D7A4 is
+	 * unassigned, which is exactly the off-by-one a <= test would eat. */
+	eqcp(UTF8N_NFD, "U+ABFF is not a syllable", "ABFF", "ABFF");
+	eqcp(UTF8N_NFD, "U+D7A4 is not a syllable", "D7A4", "D7A4");
+	/* Jamo are starters, so a decomposed syllable survives reordering. */
+	eqcp(UTF8N_NFKD, "NFKD decomposes syllables too", "AC01",
+	     "1100 1161 11A8");
+	/* A syllable with marks after it: the jamo must not be reordered into
+	 * the marks, and the marks must still sort among themselves. */
+	eqcp(UTF8N_NFD, "syllable followed by marks", "AC01 0301 0334",
+	     "1100 1161 11A8 0334 0301");
+}
+
 static void t_decompose(void)
 {
 	/* Canonical decomposition, cases that need no reordering. */
@@ -283,5 +303,6 @@ int main(void)
 	t_ccc();
 	t_decompose();
 	t_order();
+	t_hangul();
 	return failures != 0;
 }
