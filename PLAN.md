@@ -22,7 +22,7 @@ Unicode normalisation forms.
 ## Hard invariant
 
 For every one of the 20,171 non-comment lines of `NormalizationTest.txt`, all
-twelve relations that line asserts hold, and additionally every form is
+twenty equalities that line asserts hold, and additionally every form is
 idempotent on all five columns -- `f(f(x)) == f(x)` for f in NFC, NFD, NFKC,
 NFKD.  Conformance is not "most lines pass"; the file is the specification of
 what the four functions mean, and a failing line is a wrong answer.
@@ -38,7 +38,7 @@ table that forgets exclusions cannot pass by accident.
 Ranked by how little we control them, strongest first.
 
 1. **`NormalizationTest.txt` from the UCD.**  Official conformance data,
-   19,000-odd lines, each asserting twelve equalities we did not choose.
+   19,000-odd lines, each asserting twenty equalities we did not choose.
    `t/conform.c` runs all of them plus idempotence, and prints a score.
 2. **`DerivedNormalizationProps.txt`, property `Full_Composition_Exclusion`.**
    `tools/gen_tables.py` *derives* that set (listed exclusions, plus singleton
@@ -80,7 +80,12 @@ Ranked by how little we control them, strongest first.
 - [ ] Hangul decomposition and composition, algorithmic
 - [ ] canonical composition (NFC) with the blocked-starter rule
 - [ ] compatibility decomposition (NFKD, NFKC)
-- [ ] `t/conform.c`: the NormalizationTest.txt runner and its score
-- [ ] idempotence over the whole conformance corpus
+- [x] `t/conform.c`: the NormalizationTest.txt runner, idempotence, and the
+      file's second requirement over every codepoint it does not list
+      why: the oracle has to exist before it can be believed, and it scored
+      100% on the first run, which is a reason to distrust the harness.
+- [ ] mutation testing: watch the harness fail
+      why: 806,840 assertions passing on the first run proves nothing until a
+      deliberately broken implementation is seen to fail them.
 - [ ] `t/diff.py`: differential against CPython with version-skew attribution
 - [ ] README, PLAN, score published
