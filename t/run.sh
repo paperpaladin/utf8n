@@ -60,6 +60,7 @@ fi
 printf '=== building (CC=%s)\n' "$CC"
 build ./t/unit t/unit.c utf8n.c || exit 1
 build ./t/conform t/conform.c utf8n.c || exit 1
+build ./t/nfx t/nfx.c utf8n.c || exit 1
 
 printf '\n--- unit assertions (UTF-8 policy, ordering, Hangul, exclusions)\n'
 ./t/unit 2>&1 | tee -a "$OUT"
@@ -70,6 +71,17 @@ printf '\n--- unit assertions (UTF-8 policy, ordering, Hangul, exclusions)\n'
 if [ "$HAVE_UCD" = 1 ]; then
 	printf '\n--- oracle 1: NormalizationTest.txt (UCD %s)\n' "$UCD_VER"
 	./t/conform ucd/NormalizationTest.txt 2>&1 | tee -a "$OUT"
+fi
+
+# Oracle 3 and 4: CPython.  Works with no network, which is why it is the
+# oracle that always runs.  It needs the UCD of CPython's own Unicode version
+# as well as ours, to tell version skew from a real disagreement.
+if [ "$PY_VER" != none ] && fetch "$PY_VER" "ucd-$PY_VER" UnicodeData.txt \
+	DerivedNormalizationProps.txt; then
+	printf '\n--- oracle 3+4: CPython unicodedata and its UTF-8 decoder\n'
+	python3 t/diff.py ./t/nfx ucd "ucd-$PY_VER" 2>&1 | tee -a "$OUT"
+else
+	say "# WARNING: no CPython UCD data; differential oracle SKIPPED"
 fi
 
 # The committed header must be exactly what the generator produces from this
