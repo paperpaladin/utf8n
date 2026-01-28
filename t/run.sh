@@ -97,6 +97,15 @@ if [ "$HAVE_UCD" = 1 ]; then
 	fi
 fi
 
+# Untrusted bytes, straight in.  Under `make test-asan` this is the run that
+# matters: 400kB of urandom is overwhelmingly ill-formed UTF-8, and every
+# property asserted here (sizing contract, well-formed output, idempotence,
+# clean truncation) has to hold for input nobody validated.
+printf '\n--- hostile input: 400kB of /dev/urandom through all four forms\n'
+head -c 400000 /dev/urandom > scratch/urandom.bin
+./t/nfx -r < scratch/urandom.bin 2>&1 | tee -a "$OUT"
+printf '' | ./t/nfx -r 2>&1 | tee -a "$OUT"
+
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
