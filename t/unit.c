@@ -176,6 +176,12 @@ static void t_ccc(void)
 		}
 	ok(bad == 0, "Canonical_Combining_Class spot checks (%zu values)",
 	   sizeof cases / sizeof cases[0]);
+	/* The worst case a caller sizing a buffer has to allow for.  U+FDFA
+	 * ARABIC LIGATURE SALLALLAHOU ALAYHE WASALLAM is the longest
+	 * decomposition in the UCD, and a fixed-buffer caller that assumed 4
+	 * or 8 would overflow on it. */
+	ok(utf8n_max_expansion() == 18, "longest decomposition is 18 codepoints"
+	   " (got %d)", utf8n_max_expansion());
 	ok(utf8n_ucd_version()[0] != 0, "tables declare a UCD version (%s)",
 	   utf8n_ucd_version());
 }
@@ -393,6 +399,10 @@ static void t_decompose(void)
 	eq(UTF8N_NFD, "\xC2\xA0", "\xC2\xA0",
 	   "U+00A0 is unchanged (compatibility decomposition only)");
 	eq(UTF8N_NFKD, "\xC2\xA0", " ", "U+00A0 -> SPACE");
+	eqcp(UTF8N_NFKD, "U+FDFA expands to 18 codepoints", "FDFA",
+	     "0635 0644 0649 0020 0627 0644 0644 0647 0020 0639 0644 064A 0647"
+	     " 0020 0648 0633 0644 0645");
+	eqcp(UTF8N_NFD, "U+FDFA is unchanged by NFD", "FDFA", "FDFA");
 	/* Ill-formed input is replaced, then normalised. */
 	eq(UTF8N_NFD, "\xC3\xA9\xFF\xC3\xA9", "e\xCC\x81\xEF\xBF\xBD" "e\xCC\x81",
 	   "ill-formed byte becomes U+FFFD between two decompositions");
