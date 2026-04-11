@@ -20,6 +20,12 @@ enum utf8n_form { UTF8N_NFD, UTF8N_NFC, UTF8N_NFKD, UTF8N_NFKC };
  * that prefix and outcap are therefore not written at all, which is the one
  * place this deviates from snprintf, and it is deliberate.
  *
+ * in and out may be the same buffer, or overlap in any way: the whole input is
+ * consumed into an internal codepoint buffer before the first output byte is
+ * written.  Normalising in place is therefore safe, which is worth knowing
+ * because the result is never longer than 4 * UTF8N_MAX_EXPANSION per input
+ * codepoint but is usually about the same size.
+ *
  * Returns (size_t)-1, and writes nothing, if the internal codepoint buffer
  * cannot be allocated.  Ill-formed input is replaced per utf8n_decode(), so
  * the result is always well-formed UTF-8 whether truncated or not. */
