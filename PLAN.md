@@ -84,8 +84,42 @@ Ranked by how little we control them, strongest first.
       file's second requirement over every codepoint it does not list
       why: the oracle has to exist before it can be believed, and it scored
       100% on the first run, which is a reason to distrust the harness.
-- [ ] mutation testing: watch the harness fail
+- [x] mutation testing: watch the harness fail
       why: 806,840 assertions passing on the first run proves nothing until a
-      deliberately broken implementation is seen to fail them.
-- [ ] `t/diff.py`: differential against CPython with version-skew attribution
-- [ ] README, PLAN, score published
+      deliberately broken implementation is seen to fail them.  Nine of twelve
+      injected defects are caught; two of the three survivors were real gaps
+      (decode consuming more than n, the Hangul `<= SCOUNT` boundary) and are
+      now pinned by hand.
+- [x] `t/diff.py`: differential against CPython with version-skew attribution
+      why: the only oracle that works offline, and the one that needs the most
+      discipline -- 6420 codepoints differ between UCD 15.1.0 and 18.0.0, so
+      skew has to be proved per codepoint rather than claimed.
+- [x] hostile input: 400kB of /dev/urandom through all four forms under ASAN
+      why: we decode untrusted bytes; the sizing contract, well-formedness,
+      idempotence and clean truncation all have to hold for input nobody
+      validated.  This is where the truncation contract turned out to be wrong.
+- [x] a skipped oracle must not look like a passing one
+      why: offline, `make test` printed 89 passed / 0 failed and exited 0 with
+      the conformance file never opened.  There is now an oracle roster and
+      UTF8N_REQUIRE_ORACLES=1.
+- [x] README, PLAN, score published
+
+### Next, in order
+
+- [ ] `NFC_QC`/`NFD_QC` quick-check tables and the skip-ahead fast path
+      why: it is the single largest performance item and the only one with a
+      published oracle -- the quick-check properties are in the UCD, so the
+      fast path's decisions can be diffed against them for every codepoint
+      rather than trusted.  Nothing else in this list is measurable.
+- [ ] streaming API: normalise at starter boundaries so a caller can feed
+      chunks
+      why: the whole-input buffer is the one hard ceiling in the contract, and
+      the conformance corpus can be replayed through it a byte at a time, which
+      is the test that makes the segmentation argument honest.
+- [ ] a two-stage trie keyed on the top 13 bits, replacing the binary searches
+      why: only worth doing after the quick-check path, because that path
+      removes most of the lookups this would speed up.
+- [ ] `utf8n_quick_check()` as public API
+      why: callers who only need to know whether text is already normalised
+      currently have to normalise it and compare, which is the expensive way to
+      answer the cheap question.
