@@ -64,15 +64,41 @@ build ./t/unit t/unit.c utf8n.c || exit 1
 build ./t/conform t/conform.c utf8n.c || exit 1
 build ./t/nfx t/nfx.c utf8n.c || exit 1
 
+# Every oracle below runs through this, because the score is counted by
+# grepping for "ok - " lines and the exit status used to go nowhere:
+# `./t/conform ... 2>&1 | tee -a "$OUT"` discards it twice over, once
+# because a pipeline's status is tee's and once because nothing looked.
+#
+# A test binary that dies partway leaves its earlier ok lines in the file,
+# emits no "not ok", and the suite prints "N passed, 0 failed" with a
+# smaller N that nothing asserts -- so the 806,840 conformance assertions
+# can become a few dozen silently. Under test-asan it is worse: ASan exits
+# 1, and that was the status being thrown away.
+#
+# tzf/t/run.sh next door already does it this way, including the
+# ASAN_OPTIONS=exitcode= that makes a sanitizer report distinguishable from
+# an ordinary failure.
+runq() { # runq <label> <command...>
+	label=$1
+	shift
+	_out=$("$@" 2>&1)
+	_rc=$?
+	printf '%s\n' "$_out" | tee -a "$OUT"
+	if [ "$_rc" -ne 0 ]; then
+		printf 'not ok - %s exited %s (crash, abort or sanitizer)\n' \
+			"$label" "$_rc" | tee -a "$OUT"
+	fi
+}
+
 printf '\n--- unit assertions (UTF-8 policy, ordering, Hangul, exclusions)\n'
-./t/unit 2>&1 | tee -a "$OUT"
+runq "t/unit" ./t/unit
 
 # Oracle 1: the official conformance file.  20 assertions per line that we did
 # not write, plus idempotence, plus its second requirement over every codepoint
 # it does not list.
 if [ "$HAVE_UCD" = 1 ]; then
 	printf '\n--- oracle 1: NormalizationTest.txt (UCD %s)\n' "$UCD_VER"
-	./t/conform ucd/NormalizationTest.txt 2>&1 | tee -a "$OUT"
+	runq "t/conform" ./t/conform ucd/NormalizationTest.txt
 	conf_state=$(grep '^conformance score' "$OUT" | tail -1)
 fi
 
@@ -82,7 +108,7 @@ fi
 if [ "$PY_VER" != none ] && fetch "$PY_VER" "ucd-$PY_VER" UnicodeData.txt \
 	DerivedNormalizationProps.txt; then
 	printf '\n--- oracle 3+4: CPython unicodedata and its UTF-8 decoder\n'
-	python3 t/diff.py ./t/nfx ucd "ucd-$PY_VER" 2>&1 | tee -a "$OUT"
+	runq "t/diff.py" python3 t/diff.py ./t/nfx ucd "ucd-$PY_VER"
 	diff_state="ran against CPython UCD $PY_VER"
 fi
 
@@ -105,8 +131,8 @@ fi
 # clean truncation) has to hold for input nobody validated.
 printf '\n--- hostile input: 400kB of /dev/urandom through all four forms\n'
 head -c 400000 /dev/urandom > scratch/urandom.bin
-./t/nfx -r < scratch/urandom.bin 2>&1 | tee -a "$OUT"
-printf '' | ./t/nfx -r 2>&1 | tee -a "$OUT"
+runq "nfx -r urandom" sh -c './t/nfx -r < scratch/urandom.bin 2>&1'
+runq "nfx -r empty" sh -c 'printf "" | ./t/nfx -r 2>&1'
 
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")
