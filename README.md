@@ -1,10 +1,10 @@
 # utf8n
 
-Unicode normalisation -- NFD, NFC, NFKD, NFKC -- over UTF-8, in one C11 file
+Unicode normalisation (NFD, NFC, NFKD, NFKC) over UTF-8, in one C11 file
 with no dependencies beyond libc.  Tables are generated from the Unicode
 Character Database by a Python script in the repo.
 
-**Tables are from UCD 18.0.0.**  That is the version every answer below is
+Tables are from UCD 18.0.0.  That is the version every answer below is
 correct for, and `tools/gen_tables.py` reads it out of the data files rather
 than anyone typing it in; `utf8n_ucd_version()` returns it at runtime.
 
@@ -26,9 +26,9 @@ ok - @Part5: 38 lines, 1520/1520 assertions          (chained primary composites
 ok - requirement 2: 1094910/1094910 codepoints outside Part 1 are unchanged
 ```
 
-**Nothing fails.**  20 of those assertions per line are the equalities the
+Nothing fails.  20 of those assertions per line are the equalities the
 file's own header states (`c2 == toNFC(c1) == toNFC(c2) == toNFC(c3)` and so on
-for all four forms); the other 20 per line are idempotence of all four forms on
+for all four forms). The other 20 per line are idempotence of all four forms on
 all five columns, which the file does not ask for and which is where a
 non-stable canonical sort shows up.  Requirement 2 is the file's second
 conformance clause: every codepoint it does not list in Part 1 must be
@@ -49,7 +49,7 @@ make clean
 
 `make test` needs the network the first time: the UCD files are 6.5MB and are
 not committed, so `t/run.sh` fetches the four it needs into `ucd/` (pinned to
-18.0.0, read out of the committed header -- not `latest`, so a new Unicode
+18.0.0, read out of the committed header: not `latest`, so a new Unicode
 release cannot silently change the answers under the test suite).  Without the
 network the two external oracles are skipped, the run says so in a roster at
 the end, and `UTF8N_REQUIRE_ORACLES=1` turns that skip into a failure.
@@ -72,17 +72,17 @@ const char *utf8n_ucd_version(void);  /* "18.0.0" */
 most `outcap`, so the snprintf convention: call once with `outcap` 0 to size,
 once to fill.  It deviates from snprintf in one way, deliberately: on
 truncation it writes the longest *whole-codepoint* prefix that fits and leaves
-the rest of the buffer untouched, rather than cutting a UTF-8 sequence in half.
+the rest of the buffer untouched, instead of cutting a UTF-8 sequence in half.
 `in` and `out` may be the same buffer.  The only failure return is `(size_t)-1`
 for a failed `realloc`.
 
 ## Invalid UTF-8: the policy, stated and held to
 
-**One U+FFFD per maximal ill-formed subpart**, per Unicode table 3-7 and TR#36,
+One U+FFFD per maximal ill-formed subpart, per Unicode table 3-7 and TR#36,
 which is also what the WHATWG Encoding Standard requires and what CPython's
 `bytes.decode('utf-8', errors='replace')` does.  Concretely:
 
-- `E3 81 41` is U+FFFD followed by `A` -- two codepoints.  The truncated
+- `E3 81 41` is U+FFFD followed by `A`, two codepoints.  The truncated
   sequence does not swallow the ASCII byte after it.
 - Overlongs (`C0 80`, `E0 80 AF`), surrogates encoded as CESU-8 (`ED A0 80`),
   and anything above U+10FFFF (`F4 90 80 80`) are ill-formed and replaced byte
@@ -92,8 +92,8 @@ which is also what the WHATWG Encoding Standard requires and what CPython's
   over all 16.8M byte sequences of length 1, 2 and 3.
 - Normalisation is then defined on the replaced text, so the output of
   `utf8n_normalize` is always well-formed UTF-8, truncated or not.
-- `utf8n_encode` maps surrogates and out-of-range values to U+FFFD rather than
-  emitting invalid UTF-8.
+- `utf8n_encode` maps surrogates and out-of-range values to U+FFFD,
+  not emitting invalid UTF-8.
 
 185,799 byte strings (every 1 and 2 byte sequence, 120,000 random 3-6 byte
 strings, and the standard's own worked examples) are compared against CPython's
@@ -103,23 +103,23 @@ decoder, codepoint for codepoint.
 
 Ranked by how little of each one we control.
 
-1. **`NormalizationTest.txt`, UCD 18.0.0.**  20,171 lines, 806,840 assertions.
+1. `NormalizationTest.txt`, UCD 18.0.0.  20,171 lines, 806,840 assertions.
    `t/conform.c`.
-2. **`DerivedNormalizationProps.txt`, `Full_Composition_Exclusion`.**
-   `tools/gen_tables.py` derives that set itself -- the listed exclusions, plus
+2. `DerivedNormalizationProps.txt`, `Full_Composition_Exclusion`.
+   `tools/gen_tables.py` derives that set itself: the listed exclusions, plus
    singleton decompositions, plus decompositions whose first character is not a
-   starter -- and refuses to emit tables unless its derived set equals the
+   starter, and refuses to emit tables unless its derived set equals the
    UCD's published one exactly.  1120 codepoints.  This is an independent check
    on the exclusion rules, and `make test` additionally regenerates the
    committed header and diffs it byte for byte, so the tables cannot have been
    hand-edited.
-3. **CPython `unicodedata.normalize`.**  Works offline, so it is the oracle
+3. CPython `unicodedata.normalize`.  Works offline, so it is the oracle
    that always runs.  All four forms over: every BMP codepoint (63,488), every
    astral codepoint with a decomposition or a combining class plus every 97th
    of the rest (13,132), 5580 starter-mark-mark sequences, all 11,172 Hangul
    jamo sequences, runs of 33 to 2000 combining marks, and strings that start
    with a combining mark.
-4. **CPython's UTF-8 decoder**, as above.
+4. CPython's UTF-8 decoder, as above.
 
 ### Version skew, and not hiding behind it
 
@@ -146,7 +146,7 @@ decomposition in 18.0.0: the Armenian superscripts U+0558/U+058B/U+058C, the
 Latin subscripts U+209D..U+209F, the Garay block U+105C0..U+105F3, Tulu-Tigalari,
 and a run of IPA superscript modifiers in U+107Bx.  **Zero unexplained.**  With
 canonical ordering deliberately made unstable, 1500+ disagreements are reported
-as unexplained, naming both answers -- so the classifier does bite.
+as unexplained, naming both answers, so the classifier does bite.
 
 ## Watching the harness fail
 
@@ -168,7 +168,7 @@ implementation one at a time and scored against the conformance file:
 
 Reproduce any row by making the edit and running `make test`.
 
-**Three survived everything**, and two of them were real gaps that are now
+Three survived everything, and two of them were real gaps that are now
 closed:
 
 1. `utf8n_decode()` returning a sequence's nominal length for a sequence
@@ -205,9 +205,9 @@ with a smaller N. **The 806,840 conformance assertions could have become a
 few dozen with the suite green.** Under `make test-asan` the discarded
 status was ASan's exit 1.
 
-Worse, it defeated the roster -- which is this repo's best idea. `conf_state`
+Worse, it defeated the roster, which is this repo's best idea. `conf_state`
 is read with `grep '^conformance score' "$OUT" | tail -1`, so a `t/conform`
-that crashed before printing its score left that variable **empty**, and an
+that crashed before printing its score left that variable empty, and an
 empty string does not match the `*SKIPPED*` case. The "an external oracle
 did not run" warning never fired. The one mechanism built to stop a skipped
 oracle looking like a passing one was bypassed by the failure mode most
@@ -231,47 +231,47 @@ not yet, and that is the next thing to take from it.
 
 Stated plainly, because a README that only lists successes is not finished.
 
-- **No streaming or incremental API.**  `utf8n_normalize` buffers the entire
+- No streaming or incremental API.  `utf8n_normalize` buffers the entire
   input as codepoints: peak memory is about 4 bytes per input codepoint plus
   the output, and a 1GB input needs the lot at once.  There is no way to feed it
   a chunk at a time.  Normalisation is only segmentable at starter boundaries,
   so a streaming version is a real design, not a flag.
-- **`realloc` failure is reported, not survived.**  `(size_t)-1` and nothing
+- `realloc` failure is reported, not survived.  `(size_t)-1` and nothing
   written.  No fixed-buffer mode, no caller-supplied allocator.
-- **No quick-check fast path.**  Already-NFC text is fully decomposed and
+- No quick-check fast path.  Already-NFC text is fully decomposed and
   recomposed anyway, which is the single largest performance item here and is
   deliberately absent: `NFC_QC`/`NFD_QC` from `DerivedNormalizationProps.txt`
   would skip most real-world text, at the cost of a second code path that the
   conformance file would mostly not exercise.
-- **O(n^2) canonical ordering** within a run of combining marks.  Fine for the
+- O(n^2) canonical ordering within a run of combining marks.  Fine for the
   runs that occur in text (the longest in the UCD's own test data is 4) and
   tested up to 2000 marks, but a crafted input of a million marks on one base
   will take quadratic time.  An insertion sort is the right shape for runs of
   2-4 and the wrong shape for an adversary.
-- **Binary search, not a trie.**  9 comparisons for a combining class, 13 for a
+- Binary search, not a trie.  9 comparisons for a combining class, 13 for a
   decomposition, per codepoint, three passes.  Roughly 3x slower than a
   two-stage table and about 100 lines shorter.
-- **Not thread-hostile but not thread-aware either.**  No global state, so
-  concurrent calls are fine; there is no locking because there is nothing to
+- Not thread-hostile but not thread-aware either.  No global state, so
+  concurrent calls are fine. There is no locking because there is nothing to
   lock.
-- **Only the four normalisation forms.**  No `NFKC_Casefold`, no case folding,
+- Only the four normalisation forms.  No `NFKC_Casefold`, no case folding,
   no collation, no grapheme cluster segmentation, no bidi.  `wcwidth`-style
   display width lives in the sibling `vtparse` repo and is deliberately not
   duplicated here.
-- **Unicode version is baked in at generation time.**  There is no runtime
+- Unicode version is baked in at generation time.  There is no runtime
   switch, and normalising with 18.0.0 tables text that a 15.1.0 system
   normalised will differ on the 149 codepoints listed above.  That is inherent
   to normalisation across versions, not a bug here, but it is a real
   interoperability hazard if two sides of a protocol use different versions.
-- **`utf8n_encode` silently substitutes U+FFFD** for a surrogate or an
-  out-of-range value rather than reporting the error.  A caller that wants to
+- `utf8n_encode` silently substitutes U+FFFD for a surrogate or an
+  out-of-range value instead of reporting the error.  A caller that wants to
   know its codepoint was invalid has to range-check first.
 - The committed table header is **261KB of C** (113KiB of `.rodata`, 115,760
   bytes by `size -A`): 5982
   decomposition records, 6828 pool words, 422 combining-class ranges, 961
-  primary composites.  Justified because it is the whole UCD rather than a
-  Latin-1-and-hope subset, and because the alternative -- parsing
-  `UnicodeData.txt` at startup -- makes a C library depend on a 2.2MB data file
+  primary composites.  Justified because it is the whole UCD, not a
+  Latin-1-and-hope subset, and because the alternative, parsing
+  `UnicodeData.txt` at startup, makes a C library depend on a 2.2MB data file
   being installed and correct.  It compresses to about 40KB in git, and it is
   regenerated and diffed byte for byte by `make test`, so it cannot drift from
   the generator.
@@ -296,5 +296,5 @@ accept and the upgrade path.
 ## Licence
 
 GPL-3.0-or-later.  `NormalizationTest.txt` and the other UCD files are fetched
-at test time and are not redistributed here; they are covered by the Unicode
+at test time and are not redistributed here. They are covered by the Unicode
 Terms of Use.
