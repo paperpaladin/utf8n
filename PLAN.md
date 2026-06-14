@@ -83,7 +83,7 @@ Ranked by how little we control them, strongest first.
 - [x] `t/conform.c`: the NormalizationTest.txt runner, idempotence, and the
       file's second requirement over every codepoint it does not list
       why: the oracle has to exist before it can be believed, and it scored
-      100% on the first run, which is a reason to distrust the harness.
+      100% on the first run, a reason to distrust the harness.
 - [x] mutation testing: watch the harness fail
       why: 806,840 assertions passing on the first run proves nothing until a
       deliberately broken implementation is seen to fail them.  Nine of twelve
@@ -121,5 +121,5 @@ Ranked by how little we control them, strongest first.
       removes most of the lookups this would speed up.
 - [ ] `utf8n_quick_check()` as public API
       why: callers who only need to know whether text is already normalised
-      currently have to normalise it and compare, which is the expensive way to
+      currently have to normalise it and compare, the expensive way to
       answer the cheap question.

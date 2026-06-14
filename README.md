@@ -239,7 +239,7 @@ Stated plainly, because a README that only lists successes is not finished.
 - `realloc` failure is reported, not survived.  `(size_t)-1` and nothing
   written.  No fixed-buffer mode, no caller-supplied allocator.
 - No quick-check fast path.  Already-NFC text is fully decomposed and
-  recomposed anyway, which is the single largest performance item here and is
+  recomposed anyway, the single largest performance item here and is
   deliberately absent: `NFC_QC`/`NFD_QC` from `DerivedNormalizationProps.txt`
   would skip most real-world text, at the cost of a second code path that the
   conformance file would mostly not exercise.
