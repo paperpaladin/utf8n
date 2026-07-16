@@ -72,14 +72,26 @@ Ranked by how little we control them, strongest first.
       pinned by table 3-7 of the standard
       why: everything downstream is defined on codepoints, and the policy for
       ill-formed input has to be decided before anything consumes it.
-- [ ] `tools/gen_tables.py`, generated `utf8n_table.h`
+- [x] `tools/gen_tables.py`, generated `utf8n_table.h`
       why: the exclusion self-oracle lives in the generator, so it comes before
-      any code that uses the tables.
-- [ ] canonical decomposition (NFD), table-driven
-- [ ] canonical ordering by Canonical_Combining_Class, stable
-- [ ] Hangul decomposition and composition, algorithmic
-- [ ] canonical composition (NFC) with the blocked-starter rule
-- [ ] compatibility decomposition (NFKD, NFKC)
+      any code that uses the tables.  Done in ea8bf72; these six boxes were
+      left unticked by the sessions that did the work and are ticked here
+      against the commits that did it.  `make test` regenerates the header
+      into `scratch/` and `cmp`s it against the committed one, and that check
+      has now been watched to fail: a formatting-only change to the generator
+      (`%5d` -> `%6d` in one record) is caught by the byte-for-byte diff and by
+      nothing else in the suite, 106 passed / 1 failed.
+- [x] canonical decomposition (NFD), table-driven
+      done in 1ba53cc.
+- [x] canonical ordering by Canonical_Combining_Class, stable
+      done in 59989b1.
+- [x] Hangul decomposition and composition, algorithmic
+      done in e0a9186.
+- [x] canonical composition (NFC) with the blocked-starter rule
+      done in 95fdd9f.
+- [x] compatibility decomposition (NFKD, NFKC)
+      done in 1ba53cc alongside NFD; all four forms are what the 806,840
+      conformance assertions cover.
 - [x] `t/conform.c`: the NormalizationTest.txt runner, idempotence, and the
       file's second requirement over every codepoint it does not list
       why: the oracle has to exist before it can be believed, and it scored
