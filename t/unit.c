@@ -10,6 +10,7 @@
 #include "../utf8n.h"
 
 static int failures;
+static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
 static void ok(int cond, const char *fmt, ...)
 	__attribute__((format(printf, 2, 3)));
@@ -205,7 +206,6 @@ static void eq(enum utf8n_form form, const char *in, const char *want,
 	       const char *name)
 {
 	const char *got = nf(form, in);
-	static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
 	if (strcmp(got, want) != 0)
 		printf("# %s(%s): got %s want %s\n", fname[form], in, got, want);
@@ -234,7 +234,6 @@ static size_t parse_cps(const char *s, uint32_t *out, size_t cap)
 static void eqcp(enum utf8n_form form, const char *name, const char *inhex,
 		 const char *wanthex)
 {
-	static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 	uint32_t in[64], want[64], got[128];
 	char ibuf[256], obuf[1024];
 	size_t ni, nw, i, w = 0, n, r = 0, k;
@@ -439,6 +438,96 @@ static void t_decompose(void)
 	   "an embedded NUL is normalised through, not stopped at");
 }
 
+/* utf8n_quick_check() on input the external oracles cannot reach.
+ *
+ * t/diff.py already checks every codepoint's quick-check value against the
+ * UCD's published NFx_QC, and t/conform checks the YES and NO promises over
+ * the whole conformance corpus.  Neither of them can see ill-formed bytes:
+ * the UCD's property is defined on codepoints, and NormalizationTest.txt is
+ * valid UTF-8 throughout.  So the ill-formed cases are here, and they are the
+ * reason this function re-encodes each codepoint and compares the bytes
+ * instead of trusting the decoded length.
+ *
+ * Deleting that byte comparison passed the entire suite before these cases
+ * existed: 400kB of urandom is long enough that some codepoint in it is
+ * NFx_QC=No whatever happens at the ill-formed bytes, so the whole buffer
+ * answers NO either way. */
+static void t_quickcheck(void)
+{
+	static const struct {
+		const char *name, *in;
+		size_t inlen;
+		const char *want;	/* NFD NFC NFKD NFKC */
+	} cases[] = {
+		{"empty", "", 0, "YYYY"},
+		{"ASCII", "A", 1, "YYYY"},
+		{"U+00E0 precomposed", "\xC3\xA0", 2, "NYNY"},
+		{"A + U+0300", "A\xCC\x80", 3, "YMYM"},
+		{"U+0300 alone", "\xCC\x80", 2, "YMYM"},
+		/* ccc 230 then ccc 220: canonical ordering would swap them, so
+		 * no form has this as its output, whatever the two codepoints
+		 * say on their own. */
+		{"marks out of order", "\xCC\x81\xCC\x96", 4, "NNNN"},
+		{"same class, in order", "\xCC\x81\xCC\x80", 4, "YMYM"},
+		{"U+2126 OHM SIGN", "\xE2\x84\xA6", 3, "NNNN"},
+		{"U+00A8 compat only", "\xC2\xA8", 2, "YYNN"},
+		{"Hangul syllable U+AC00", "\xEA\xB0\x80", 3, "NYNY"},
+		{"Hangul jungseong U+1161", "\xE1\x85\xA1", 3, "YMYM"},
+		{"well-formed U+FFFD", "\xEF\xBF\xBD", 3, "YYYY"},
+		/* Ill-formed.  Every decoded codepoint here is QC_Yes, so
+		 * anything that forgets the bytes were ill-formed says YES and
+		 * promises that normalising will not touch them. */
+		{"ill-formed: lone continuation", "\x80", 1, "NNNN"},
+		{"ill-formed: truncated 2-byte", "\xC3", 1, "NNNN"},
+		{"ill-formed: A C0 A", "A\xC0" "A", 3, "NNNN"},
+		{"ill-formed: surrogate CESU-8", "\xED\xA0\x80", 3, "NNNN"},
+		/* F0 90 80 20 consumes three bytes and yields U+FFFD, which is
+		 * exactly what three well-formed bytes of U+FFFD do, so a
+		 * length check alone calls this well-formed. */
+		{"ill-formed: F0 90 80 20", "\xF0\x90\x80 ", 4, "NNNN"},
+	};
+	static const enum utf8n_form order[4] = {
+		UTF8N_NFD, UTF8N_NFC, UTF8N_NFKD, UTF8N_NFKC
+	};
+	size_t i, f;
+	int bad = 0, promises = 0, seen[3] = {0, 0, 0};
+
+	for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+		for (f = 0; f < 4; f++) {
+			char out[64];
+			enum utf8n_qc q = utf8n_quick_check(order[f],
+							    cases[i].in,
+							    cases[i].inlen);
+			size_t n = utf8n_normalize(order[f], cases[i].in,
+						   cases[i].inlen, out,
+						   sizeof out);
+			int same = n == cases[i].inlen &&
+				   memcmp(out, cases[i].in, n) == 0;
+
+			seen[q]++;
+			if ("YNM"[q] != cases[i].want[f]) {
+				printf("# quick_check(%s, %s) = %c, want %c\n",
+				       fname[f], cases[i].name, "YNM"[q],
+				       cases[i].want[f]);
+				bad++;
+			}
+			if ((q == UTF8N_QC_YES && !same) ||
+			    (q == UTF8N_QC_NO && same)) {
+				printf("# quick_check(%s, %s) = %c but "
+				       "normalising %s the bytes\n", fname[f],
+				       cases[i].name, "YNM"[q],
+				       same ? "left" : "changed");
+				promises++;
+			}
+		}
+	}
+	ok(bad == 0, "quick check spot values (%zu cases x 4 forms, %d Yes "
+	   "%d No %d Maybe)", sizeof cases / sizeof cases[0], seen[0], seen[1],
+	   seen[2]);
+	ok(promises == 0 && seen[0] && seen[1] && seen[2],
+	   "quick check kept its YES and NO promises on all of them");
+}
+
 int main(void)
 {
 	t_utf8();
@@ -447,5 +536,6 @@ int main(void)
 	t_order();
 	t_hangul();
 	t_compose();
+	t_quickcheck();
 	return failures != 0;
 }

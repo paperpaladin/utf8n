@@ -9,6 +9,12 @@
  * be valid UTF-8; each output line is the codepoints our decoder produces.
  * That is the mode that gets compared against CPython's errors='replace'.
  *
+ * -q: each input line is a space-separated list of hex codepoints; each output
+ * line is utf8n_quick_check() on it, as four letters Y, N or M, semicolon
+ * separated, in the same NFD;NFC;NFKD;NFKC order.  t/diff.py compares that
+ * against the UCD's published NFD_QC/NFC_QC/NFKD_QC/NFKC_QC and against
+ * CPython's unicodedata.is_normalized.
+ *
  * -r: read raw bytes from stdin, almost certainly not valid UTF-8, and assert
  * the properties that must hold for any input at all: the two-call sizing
  * contract, that the result is well-formed UTF-8, that the result is
@@ -23,6 +29,8 @@
 
 #include "../utf8n.h"
 #include "../utf8n_table.h"
+
+static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
 #define MAXCP 4096
 #define MAXBYTES (MAXCP * 4 * UTF8N_MAX_EXPANSION + 4)
@@ -72,9 +80,100 @@ static int wellformed(const char *b, size_t n)
 	return 1;
 }
 
+/* The two promises utf8n_quick_check() makes, checked against what
+ * normalising actually did: YES means the bytes do not change, NO means they
+ * do.  Only MAYBE is allowed to be wrong in either direction.  Over 400kB of
+ * urandom every answer is NO, so this is mostly the NO half; the YES half is
+ * exercised by the empty input and, over real text, by t/conform. */
+static int qc_agrees(const char *in, size_t n, const char *norm, size_t nn,
+		     enum utf8n_form f)
+{
+	int same = nn == n && memcmp(in, norm, n) == 0;
+
+	switch (utf8n_quick_check(f, in, n)) {
+	case UTF8N_QC_YES:
+		return same;
+	case UTF8N_QC_NO:
+		return !same;
+	default:
+		return 1;
+	}
+}
+
+/* The same promise at a granularity where ill-formed bytes can still decide
+ * the answer.
+ *
+ * Over the whole 400kB buffer every form answers NO, because somewhere in it
+ * is certainly a codepoint with NFx_QC=No, so the check above holds even for
+ * a quick check that never looks at whether the bytes were well-formed --
+ * which is exactly how deleting that test survived the whole suite once.  An
+ * 8-byte window is short enough that plenty of them contain nothing but
+ * QC_Yes codepoints, and about one in 256 is pure ASCII and so a YES.
+ *
+ * The output buffer is sized by the first call and allocated to exactly that,
+ * so a write past the end lands outside the allocation where the sanitizer
+ * can see it, rather than inside a buffer rounded up to a power of two. */
+static int qc_windows(const char *in, size_t n)
+{
+	long tally[3] = {0, 0, 0}, broken = 0;
+	size_t i;
+
+	/* Not an "ok" line and not a silent pass: a comment, because there is
+	 * nothing here to check and saying so is the only honest option. */
+	if (n < 8) {
+		printf("# %zu bytes: too short for an 8-byte window, window "
+		       "sweep not run\n", n);
+		return 0;
+	}
+	for (i = 0; i + 8 <= n; i += 8) {
+		int f;
+
+		for (f = 0; f < 4; f++) {
+			enum utf8n_form form = (enum utf8n_form)f;
+			enum utf8n_qc q = utf8n_quick_check(form, in + i, 8);
+			size_t need = utf8n_normalize(form, in + i, 8, NULL, 0);
+			char *out;
+			int same;
+
+			if (need == (size_t)-1)
+				return 2;
+			out = malloc(need ? need : 1);
+			if (!out)
+				return 2;
+			if (utf8n_normalize(form, in + i, 8, out, need)
+			    != need) {
+				free(out);
+				printf("not ok - %s: sizing call disagrees "
+				       "with the filling call on an 8-byte "
+				       "window at %zu\n", fname[f], i);
+				return 1;
+			}
+			same = need == 8 && memcmp(out, in + i, 8) == 0;
+			free(out);
+			tally[q]++;
+			if ((q == UTF8N_QC_YES && !same) ||
+			    (q == UTF8N_QC_NO && same)) {
+				if (broken++ < 4)
+					printf("# window at %zu: quick check "
+					       "%c for %s but normalising %s "
+					       "the bytes\n", i, "YNM"[q],
+					       fname[f],
+					       same ? "left" : "changed");
+			}
+		}
+	}
+	printf("%s - quick check kept its promises on %zu 8-byte windows of "
+	       "random bytes: %ld Yes %ld No %ld Maybe, %ld broken\n",
+	       broken || !tally[0] || !tally[1] ? "not ok" : "ok", n / 8,
+	       tally[0], tally[1], tally[2], broken);
+	if (!tally[0] || !tally[1])
+		printf("# a quick-check answer that never occurred means the "
+		       "promise above was not tested in both directions\n");
+	return broken || !tally[0] || !tally[1] ? 1 : 0;
+}
+
 static int raw_mode(void)
 {
-	static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 	char *in = NULL, *a = NULL, *b = NULL;
 	size_t n = 0, cap = 0;
 	int f, bad = 0;
@@ -160,9 +259,31 @@ static int raw_mode(void)
 			if (bad)
 				continue;
 		}
+		if (!qc_agrees(in, n, a, need, (enum utf8n_form)f)) {
+			printf("not ok - %s: quick check %c on %zu random "
+			       "bytes, but normalising %s them\n", fname[f],
+			       "YNM"[utf8n_quick_check((enum utf8n_form)f,
+						       in, n)],
+			       n, need == n && memcmp(in, a, n) == 0
+				       ? "did not change" : "changed");
+			bad = 1;
+			continue;
+		}
+		if (utf8n_quick_check((enum utf8n_form)f, a, need)
+		    == UTF8N_QC_NO) {
+			printf("not ok - %s: quick check calls its own output "
+			       "not normalised\n", fname[f]);
+			bad = 1;
+			continue;
+		}
 		printf("ok - %s of %zu bytes: sized, well-formed, idempotent, "
-		       "truncates cleanly (%zu bytes out)\n", fname[f], n, need);
+		       "quick check %c and it kept its promise, truncates "
+		       "cleanly (%zu bytes out)\n", fname[f], n,
+		       "YNM"[utf8n_quick_check((enum utf8n_form)f, in, n)],
+		       need);
 	}
+	if (qc_windows(in, n))
+		bad = 1;
 	free(in);
 	free(a);
 	free(b);
@@ -173,6 +294,7 @@ int main(int argc, char **argv)
 {
 	static char line[MAXCP * 8], in[MAXBYTES], out[MAXBYTES];
 	int bytes_mode = argc > 1 && strcmp(argv[1], "-b") == 0;
+	int qc_mode = argc > 1 && strcmp(argv[1], "-q") == 0;
 
 	if (argc > 1 && strcmp(argv[1], "-r") == 0)
 		return raw_mode();
@@ -193,6 +315,13 @@ int main(int argc, char **argv)
 		}
 		for (i = 0; i < n; i++)
 			w += utf8n_encode(v[i], (unsigned char *)in + w);
+		if (qc_mode) {
+			for (i = 0; i < 4; i++)
+				printf("%s%c", i ? ";" : "",
+				       "YNM"[utf8n_quick_check(order[i], in, w)]);
+			putchar('\n');
+			continue;
+		}
 		for (i = 0; i < 4; i++) {
 			size_t m = utf8n_normalize(order[i], in, w, out,
 						   sizeof out);

@@ -136,6 +136,75 @@ int utf8n_ccc(uint32_t cp)
 	}
 	return 0;
 }
+/* --- quick check ----------------------------------------------------------
+ *
+ * UAX #15's quick check: decide whether text is already normalised without
+ * normalising it.  The table says No, Maybe or Yes per codepoint per form,
+ * and the only state the walk needs is the previous combining class, because
+ * marks arriving out of canonical order make text non-normalised however
+ * stable each of them is on its own.
+ *
+ * Two bits per form, indexed by enum utf8n_form, so the enum's numbering and
+ * the generator's bit layout are one fact in two files.
+ */
+_Static_assert(UTF8N_QC_NO == 1 && UTF8N_QC_MAYBE == 2,
+	       "enum utf8n_qc must match the quick-check table's encoding");
+_Static_assert(UTF8N_NFD == 0 && UTF8N_NFC == 1 && UTF8N_NFKD == 2 &&
+	       UTF8N_NFKC == 3,
+	       "enum utf8n_form must match the quick-check table's bit order");
+
+static unsigned qc_bits(uint32_t cp)
+{
+	size_t lo = 0, hi = NELEM(utf8n_qc_tab);
+
+	while (lo < hi) {
+		size_t m = lo + (hi - lo) / 2;
+		if (cp < utf8n_qc_tab[m].lo)
+			hi = m;
+		else if (cp > utf8n_qc_tab[m].hi)
+			lo = m + 1;
+		else
+			return utf8n_qc_tab[m].qc;
+	}
+	return 0;			/* Yes for all four forms */
+}
+
+enum utf8n_qc utf8n_quick_check(enum utf8n_form form, const char *in,
+				size_t inlen)
+{
+	enum utf8n_qc result = UTF8N_QC_YES;
+	size_t i = 0;
+	int last_cc = 0;
+
+	while (i < inlen) {
+		unsigned char tmp[4];
+		uint32_t cp;
+		size_t r = utf8n_decode((const unsigned char *)in + i,
+					inlen - i, &cp);
+		unsigned v;
+		int cc;
+
+		/* Ill-formed input is No, and a length check alone does not
+		 * find it: F0 90 80 20 consumes three bytes and yields U+FFFD,
+		 * which is exactly what three well-formed bytes of U+FFFD do.
+		 * Re-encoding and comparing the bytes is the test that
+		 * separates them. */
+		if (r != utf8n_encode(cp, tmp) || memcmp(tmp, in + i, r) != 0)
+			return UTF8N_QC_NO;
+		i += r;
+		cc = utf8n_ccc(cp);
+		if (cc != 0 && last_cc > cc)
+			return UTF8N_QC_NO;	/* out of canonical order */
+		v = (qc_bits(cp) >> (2u * (unsigned)form)) & 3u;
+		if (v == UTF8N_QC_NO)
+			return UTF8N_QC_NO;
+		if (v == UTF8N_QC_MAYBE)
+			result = UTF8N_QC_MAYBE;
+		last_cc = cc;
+	}
+	return result;
+}
+
 static const struct utf8n_dec *dec_find(uint32_t cp)
 {
 	size_t lo = 0, hi = NELEM(utf8n_dec_tab);

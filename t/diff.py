@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Differential test against CPython's unicodedata, and against its UTF-8
-decoder.
+decoder, plus utf8n_quick_check() against the UCD's published quick-check
+properties.
 
 Usage: python3 t/diff.py ./t/nfx ucd ucd-<python's version>
 
@@ -11,6 +12,14 @@ DerivedNormalizationProps.txt files: it is reported as version skew only when a
 codepoint in the input, or in either answer, demonstrably changed its combining
 class, its decomposition or its composition-exclusion status between the two
 versions, and the change is printed.  Anything else is a failure.
+
+The quick-check sweep is the one check here that has nothing to do with
+CPython: NFD_QC, NFC_QC, NFKD_QC and NFKC_QC are published in
+DerivedNormalizationProps.txt for the same UCD version our tables come from,
+so there is no skew to argue about and every codepoint is either right or
+wrong.  The parser for those lines is deliberately a second one, not an import
+from tools/gen_tables.py, so that a misreading of the file cannot agree with
+itself.
 
 Prints TAP-ish lines for t/run.sh to count.
 """
@@ -55,6 +64,58 @@ def load_props(ucddir):
     return props
 
 
+def parse_qc(path, prop):
+    """-> (no, maybe) for a quick-check property.  Yes is the unlisted default."""
+    no, maybe = set(), set()
+    for line in open(path, encoding='utf-8'):
+        line = line.split('#', 1)[0].strip()
+        if not line:
+            continue
+        f = [x.strip() for x in line.split(';')]
+        if len(f) < 3 or f[1] != prop:
+            continue
+        r = f[0].split('..')
+        rng = range(int(r[0], 16), int(r[-1], 16) + 1)
+        (no if f[2] == 'N' else maybe).update(rng)
+    return no, maybe
+
+
+def quick_check_sweep(nfx, ucddir):
+    """utf8n_quick_check() on every single codepoint against the UCD."""
+    props = os.path.join(ucddir, 'DerivedNormalizationProps.txt')
+    want = {}
+    for i, form in enumerate(FORMS):
+        no, maybe = parse_qc(props, form + '_QC')
+        for cp in no:
+            want.setdefault(cp, ['Y'] * 4)[i] = 'N'
+        for cp in maybe:
+            want.setdefault(cp, ['Y'] * 4)[i] = 'M'
+    cps = [c for c in range(0x110000) if not 0xD800 <= c <= 0xDFFF]
+    got = run_nfx(nfx, ['-q'], ['%04X' % c for c in cps])
+    if len(got) != len(cps):
+        ok(False, 'quick check: nfx -q returned %d lines for %d codepoints'
+           % (len(got), len(cps)))
+        return
+    bad, seen = [], {'Y': 0, 'N': 0, 'M': 0}
+    for cp, line in zip(cps, got):
+        expect = ';'.join(want.get(cp, ['Y'] * 4))
+        for ch in line.split(';'):
+            seen[ch] = seen.get(ch, 0) + 1
+        if line != expect:
+            bad.append((cp, line, expect))
+    for cp, line, expect in bad[:12]:
+        print('# DISAGREE quick check U+%04X: ours %s, UCD %s (NFD;NFC;NFKD;NFKC)'
+              % (cp, line, expect))
+    if len(bad) > 12:
+        print('# ...and %d more' % (len(bad) - 12))
+    # A sweep that answered Y to everything would match for 1,096,838 of these
+    # codepoints, so the three answers are counted and all three are required.
+    ok(not bad and min(seen[c] for c in 'YNM') > 0,
+       'quick check of every codepoint matches the UCD\'s NFx_QC: %d '
+       'codepoints x 4 forms, %d Yes %d No %d Maybe, %d wrong'
+       % (len(cps), seen['Y'], seen['N'], seen['M'], len(bad)))
+
+
 def changed_set(a, b):
     """Codepoints whose normalisation-relevant properties differ."""
     out = {}
@@ -93,11 +154,26 @@ def compare(label, nfx, seqs, changed, ourver, pyver):
         ok(False, '%s: nfx returned %d lines for %d inputs'
            % (label, len(got), len(seqs)))
         return 0
+    qc = run_nfx(nfx, ['-q'], lines)
     bad = []
     skew = {}
-    for seq, line in zip(seqs, got):
+    for seq, line, qline in zip(seqs, got, qc):
         s = ''.join(map(chr, seq))
         cols = line.split(';')
+        # The quick check against CPython's own answer to the same question.
+        # YES and NO are promises; MAYBE promises nothing, so it is skipped.
+        for form, q in zip(FORMS, qline.split(';')):
+            if q == 'M':
+                continue
+            if unicodedata.is_normalized(form, s) == (q == 'Y'):
+                continue
+            culprits = [cp for cp in set(seq) if cp in changed]
+            if culprits:
+                for cp in culprits:
+                    skew[cp] = changed[cp]
+            else:
+                bad.append(('QC ' + form, hexs(s), q,
+                            'Y' if unicodedata.is_normalized(form, s) else 'N'))
         for form, col in zip(FORMS, cols):
             want = hexs(unicodedata.normalize(form, s))
             if col == want:
@@ -163,6 +239,8 @@ def main():
 
     # Single codepoints: the whole BMP, then every astral codepoint that has a
     # decomposition or a combining class, then a stride sample of the rest.
+    quick_check_sweep(nfx, ourdir)
+
     skewed = 0
     bmp = [(c,) for c in range(0x10000) if not 0xD800 <= c <= 0xDFFF]
     skewed += compare('every BMP codepoint', nfx, bmp, changed, ourver, pyver)

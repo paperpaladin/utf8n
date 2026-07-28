@@ -8,6 +8,12 @@
  * all five columns, plus the file's second conformance requirement: every
  * codepoint NOT listed in Part 1 normalises to itself under all four forms.
  *
+ * It also checks utf8n_quick_check() against what normalising actually does,
+ * for all five columns in all four forms: YES has to mean the bytes do not
+ * change and NO has to mean they do.  That is counted separately from the
+ * conformance score, because it is our property and not one of the twenty
+ * equalities the file states.
+ *
  * Usage: t/conform ucd/NormalizationTest.txt
  */
 #include <stdio.h>
@@ -25,6 +31,7 @@
 static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
 static long pass[MAXPART], fail[MAXPART], lines[MAXPART], badlines[MAXPART];
+static long qc_pass, qc_fail, qc_seen[3];
 static long shown;
 static unsigned char part1[(0x110000 + 7) / 8];
 
@@ -122,6 +129,38 @@ static void check_idem(int part, long lineno, enum utf8n_form f,
 		       "U+%04X...\n", part, lineno, fname[f], x->cp[0]);
 }
 
+/* utf8n_quick_check() against the truth, which is what normalising does.
+ *
+ * YES is a promise that the bytes do not change and NO a promise that they
+ * do; MAYBE promises nothing and is only counted.  The three answers are
+ * tallied because this check is trivially satisfiable by always answering
+ * MAYBE, and an implementation that did would pass every assertion here while
+ * being useless. */
+static void check_qc(long lineno, enum utf8n_form f, const struct str *x)
+{
+	char got[MAXCOL * 4 * UTF8N_MAX_EXPANSION + 1];
+	size_t n = utf8n_normalize(f, x->b, x->n, got, sizeof got - 1);
+	enum utf8n_qc q = utf8n_quick_check(f, x->b, x->n);
+	int same;
+
+	if (n == (size_t)-1 || n >= sizeof got - 1) {
+		qc_fail++;
+		return;
+	}
+	same = n == x->n && memcmp(got, x->b, n) == 0;
+	qc_seen[q]++;
+	if ((q == UTF8N_QC_YES && !same) || (q == UTF8N_QC_NO && same)) {
+		qc_fail++;
+		if (shown++ < MAXSHOW)
+			printf("# FAIL line %ld: quick check %s for %s(U+%04X"
+			       "...), but normalising %s the bytes\n", lineno,
+			       q == UTF8N_QC_YES ? "YES" : "NO", fname[f],
+			       x->cp[0], same ? "left" : "changed");
+		return;
+	}
+	qc_pass++;
+}
+
 int main(int argc, char **argv)
 {
 	char line[MAXLINE];
@@ -188,6 +227,10 @@ int main(int argc, char **argv)
 			for (f = 0; f < 4; f++)
 				check_idem(part, lineno, (enum utf8n_form)f, &c[i]);
 
+		for (i = 0; i < 5; i++)
+			for (f = 0; f < 4; f++)
+				check_qc(lineno, (enum utf8n_form)f, &c[i]);
+
 		if (fail[part] != before_fail)
 			badlines[part]++;
 	}
@@ -237,9 +280,19 @@ int main(int argc, char **argv)
 	       inv2_fail ? "not ok" : "ok", inv2_pass / 4,
 	       (inv2_pass + inv2_fail) / 4);
 
+	printf("%s - quick check promises hold on every column: %ld/%ld "
+	       "column-form pairs, %ld Yes %ld No %ld Maybe\n",
+	       qc_fail || !qc_seen[0] || !qc_seen[1] || !qc_seen[2]
+		       ? "not ok" : "ok",
+	       qc_pass, qc_pass + qc_fail, qc_seen[0], qc_seen[1], qc_seen[2]);
+	if (!qc_seen[0] || !qc_seen[1] || !qc_seen[2])
+		printf("# one of the three quick-check answers never occurred, "
+		       "so the promises above were not all tested\n");
+
 	printf("\nconformance score: %ld/%ld assertions, %ld/%ld lines "
 	       "(NormalizationTest.txt, UCD %s)\n",
 	       total_pass, total_pass + total_fail, nlines - nbad, nlines,
 	       utf8n_ucd_version());
-	return total_fail || inv2_fail ? 1 : 0;
+	return total_fail || inv2_fail || qc_fail || !qc_seen[0] ||
+	       !qc_seen[1] || !qc_seen[2] ? 1 : 0;
 }

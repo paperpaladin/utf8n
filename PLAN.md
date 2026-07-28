@@ -14,6 +14,10 @@ Unicode normalisation forms.
   implementation detail.
 - `utf8n_ccc()` exposes Canonical_Combining_Class, because the canonical
   ordering test has to be able to check it independently.
+- `utf8n_quick_check(form, in, inlen)` answers whether text is already in a
+  form without normalising it, with UAX #15's three answers.  YES promises
+  that `utf8n_normalize()` returns the input unchanged, NO promises that it
+  does not, MAYBE promises nothing.
 - Tables come from `tools/gen_tables.py` reading the UCD.  The generated header
   is committed so that building needs gcc and nothing else.
 - Not in the contract: collation, case folding, grapheme segmentation, a
@@ -46,14 +50,20 @@ Ranked by how little we control them, strongest first.
    set equals the UCD's published one, exactly, or refuses to emit tables.  This
    is the oracle for the composition-exclusion rules, and it is independent of
    the normalisation test data.
-3. CPython's `unicodedata.normalize`.  Available offline, so it is the
+3. `DerivedNormalizationProps.txt`, properties `NFD_QC`, `NFC_QC`, `NFKD_QC`,
+   `NFKC_QC`.  `tools/gen_tables.py` derives all four by normalising every
+   codepoint with its own Python implementation and refuses to emit tables
+   unless its No and Maybe sets equal the published ones; `t/diff.py` then
+   compares the C `utf8n_quick_check` against the same file for every
+   codepoint, with its own parser for those lines.  4,448,256 answers.
+4. CPython's `unicodedata.normalize`.  Available offline, so it is the
    oracle when the UCD files cannot be fetched.  `t/diff.py` compares all four
    forms over the whole BMP plus a sample of the astral planes.  Python's UCD
    version differs from ours, so disagreements are classified against the two
    `UnicodeData.txt` files: a disagreement is tolerated only when the codepoint
    involved demonstrably changed between the two versions, and anything else
    fails the run.
-4. CPython's UTF-8 decoder.  `bytes.decode('utf-8', errors='replace')`
+5. CPython's UTF-8 decoder.  `bytes.decode('utf-8', errors='replace')`
    implements the same maximal-subpart policy, so `t/diff.py` checks ill-formed
    input against it, not against our own opinion.
 
@@ -63,8 +73,13 @@ Ranked by how little we control them, strongest first.
   input as codepoints.
 - NFKC_Casefold, collation keys, grapheme clusters, `wcwidth` (that one lives in
   `vtparse`, deliberately not duplicated here).
-- Quick-check fast paths.  Always decomposing is slower and much shorter, and
-  the conformance file does not reward the cleverness.
+- ~~Quick-check fast paths~~.  This said "always decomposing is slower and
+  much shorter, and the conformance file does not reward the cleverness",
+  which contradicted the first item of the queue below for as long as both
+  were written down.  The queue wins: the properties have a published oracle,
+  so the cleverness is checkable, which was the real objection.  The tables
+  and `utf8n_quick_check()` are in; the fast path inside
+  `utf8n_normalize()` is the next commit.
 
 ## Commit sequence
 
@@ -118,11 +133,25 @@ Ranked by how little we control them, strongest first.
 
 ### Next, in order
 
-- [ ] `NFC_QC`/`NFD_QC` quick-check tables and the skip-ahead fast path
+- [x] `NFC_QC`/`NFD_QC` quick-check tables, derived and checked
       why: it is the single largest performance item and the only one with a
       published oracle: the quick-check properties are in the UCD, so the
       fast path's decisions can be diffed against them for every
       codepoint, not trusted.  Nothing else in this list is measurable.
+      Done: the generator derives all four properties by normalising every
+      codepoint itself and refuses unless its sets equal the UCD's;
+      `t/diff.py` checks the C against the same file for all 1,112,064
+      codepoints; `t/conform` checks the YES and NO promises on all five
+      columns of all 20,171 lines.  Ten mutants, one survivor, which was a
+      harness gap and is now closed by 17 hand cases and a 50,000-window
+      sweep of random bytes: see the README.
+- [ ] the skip-ahead fast path inside `utf8n_normalize()`
+      why: the tables are dead weight inside the library until something
+      consults them, and this is the half that has to be measured rather than
+      argued: a copy-the-prefix path is a second code path through every
+      caller, so the conformance corpus has to be replayed through it with the
+      number of codepoints it skipped reported, or it can be silently unused
+      and prove nothing.
 - [ ] streaming API: normalise at starter boundaries so a caller can feed
       chunks
       why: the whole-input buffer is the one hard ceiling in the contract, and
@@ -131,7 +160,9 @@ Ranked by how little we control them, strongest first.
 - [ ] a two-stage trie keyed on the top 13 bits, replacing the binary searches
       why: only worth doing after the quick-check path, because that path
       removes most of the lookups this would speed up.
-- [ ] `utf8n_quick_check()` as public API
+- [x] `utf8n_quick_check()` as public API
       why: callers who only need to know whether text is already normalised
       currently have to normalise it and compare, the expensive way to
-      answer the cheap question.
+      answer the cheap question.  Done in the same commit as the tables,
+      because a table with no caller cannot be tested and an API with no
+      table cannot exist.

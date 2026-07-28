@@ -50,6 +50,29 @@ int utf8n_max_expansion(void);
 /* Canonical_Combining_Class of cp, 0 for a starter. */
 int utf8n_ccc(uint32_t cp);
 
+/* Result of utf8n_quick_check().  The numbers are also the encoding used by
+ * the generated quick-check table, so they are not free to be reordered;
+ * utf8n.c has the _Static_assert that says so. */
+enum utf8n_qc { UTF8N_QC_YES = 0, UTF8N_QC_NO = 1, UTF8N_QC_MAYBE = 2 };
+
+/* Is in[0..inlen) already in the given form?  This is UAX #15's quick check:
+ * one table lookup per codepoint, no allocation, and it stops at the first
+ * codepoint that settles the question.
+ *
+ * UTF8N_QC_YES is a guarantee: utf8n_normalize() on this input would return
+ * these exact bytes.  UTF8N_QC_NO is equally definite the other way.
+ * UTF8N_QC_MAYBE means the cheap test cannot tell -- the input ends with, or
+ * contains, a codepoint that something in front of it might compose with --
+ * and the only way to find out is to normalise and compare.
+ *
+ * Ill-formed input is UTF8N_QC_NO, including a byte sequence that decodes to
+ * a codepoint that is itself normalisation-stable: utf8n_normalize() replaces
+ * the ill-formed bytes with U+FFFD, so what comes back is not what went in,
+ * and YES has to keep meaning "unchanged".  Well-formed U+FFFD is of course
+ * fine. */
+enum utf8n_qc utf8n_quick_check(enum utf8n_form form, const char *in,
+				size_t inlen);
+
 /* Version of the Unicode Character Database the tables were generated from. */
 const char *utf8n_ucd_version(void);
 
