@@ -21,11 +21,17 @@
  * idempotent, and that a one-byte-short buffer truncates instead of
  * overflowing.  This is the mode `make test-asan` points at /dev/urandom.
  *
+ * -t: read raw bytes from stdin and time all four forms over them, printing
+ * comment lines.  A timing is not a pass or a fail, so it is never an "ok"
+ * line; it is here so the fast path's claim is a measurement in the log of
+ * every run rather than a number somebody typed into the README once.
+ *
  * One process for the whole corpus, because fork-per-string would dominate.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "../utf8n.h"
 #include "../utf8n_table.h"
@@ -172,25 +178,85 @@ static int qc_windows(const char *in, size_t n)
 	return broken || !tally[0] || !tally[1] ? 1 : 0;
 }
 
-static int raw_mode(void)
+/* Slurp stdin.  Shared by -r and -t. */
+static char *slurp(size_t *len)
 {
-	char *in = NULL, *a = NULL, *b = NULL;
+	char *in = NULL;
 	size_t n = 0, cap = 0;
-	int f, bad = 0;
 
-	for (;;) {			/* slurp stdin */
+	for (;;) {
 		size_t got;
 		if (n == cap) {
 			cap = cap ? cap * 2 : 65536;
 			in = realloc(in, cap);
 			if (!in)
-				return 2;
+				return NULL;
 		}
 		got = fread(in + n, 1, cap - n, stdin);
 		n += got;
 		if (got == 0)
 			break;
 	}
+	/* Trim to the exact length: a buffer rounded up to a power of two
+	 * hides a read past the end of the data from the sanitizer, which is
+	 * the whole point of running this mode under ASan. */
+	in = realloc(in, n ? n : 1);
+	*len = n;
+	return in;
+}
+
+static int bench_mode(void)
+{
+	size_t n, i;
+	char *in = slurp(&n), *out;
+	size_t need;
+
+	if (!in)
+		return 2;
+	if (n == 0) {
+		free(in);
+		printf("# nothing on stdin, nothing to time\n");
+		return 0;
+	}
+	need = utf8n_normalize(UTF8N_NFC, in, n, NULL, 0);
+	for (i = 0; i < 4; i++) {
+		size_t m = utf8n_normalize((enum utf8n_form)i, in, n, NULL, 0);
+		if (m > need)
+			need = m;
+	}
+	out = malloc(need);
+	if (!out) {
+		free(in);
+		return 2;
+	}
+	for (i = 0; i < 4; i++) {
+		clock_t t0 = clock();
+		long reps = 0;
+		double secs;
+
+		do {
+			utf8n_normalize((enum utf8n_form)i, in, n, out, need);
+			reps++;
+			secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+		} while (secs < 0.2);
+		printf("# %-4s %7.1f MB/s over %zu bytes (%ld reps, %.3fs)\n",
+		       fname[i], (double)n * (double)reps / secs / 1e6, n,
+		       reps, secs);
+	}
+	free(out);
+	free(in);
+	return 0;
+}
+
+static int raw_mode(void)
+{
+	char *a = NULL, *b = NULL;
+	size_t n = 0;
+	char *in = slurp(&n);
+	int f, bad = 0;
+
+	if (!in)
+		return 2;
 
 	for (f = 0; f < 4; f++) {
 		size_t need = utf8n_normalize((enum utf8n_form)f, in, n, NULL, 0);
@@ -298,6 +364,8 @@ int main(int argc, char **argv)
 
 	if (argc > 1 && strcmp(argv[1], "-r") == 0)
 		return raw_mode();
+	if (argc > 1 && strcmp(argv[1], "-t") == 0)
+		return bench_mode();
 	uint32_t v[MAXCP];
 	static const enum utf8n_form order[4] = {
 		UTF8N_NFD, UTF8N_NFC, UTF8N_NFKD, UTF8N_NFKC

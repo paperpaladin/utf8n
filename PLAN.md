@@ -77,9 +77,10 @@ Ranked by how little we control them, strongest first.
   much shorter, and the conformance file does not reward the cleverness",
   which contradicted the first item of the queue below for as long as both
   were written down.  The queue wins: the properties have a published oracle,
-  so the cleverness is checkable, which was the real objection.  The tables
-  and `utf8n_quick_check()` are in; the fast path inside
-  `utf8n_normalize()` is the next commit.
+  so the cleverness is checkable, which was the real objection.  Both halves
+  are in now, and the second sentence of the old non-goal was also wrong on
+  the facts: the conformance file does reward it, once the harness counts
+  bytes copied instead of only comparing answers.
 
 ## Commit sequence
 
@@ -145,13 +146,29 @@ Ranked by how little we control them, strongest first.
       columns of all 20,171 lines.  Ten mutants, one survivor, which was a
       harness gap and is now closed by 17 hand cases and a 50,000-window
       sweep of random bytes: see the README.
-- [ ] the skip-ahead fast path inside `utf8n_normalize()`
+- [x] the skip-ahead fast path inside `utf8n_normalize()`
       why: the tables are dead weight inside the library until something
       consults them, and this is the half that has to be measured rather than
       argued: a copy-the-prefix path is a second code path through every
       caller, so the conformance corpus has to be replayed through it with the
       number of codepoints it skipped reported, or it can be silently unused
-      and prove nothing.
+      and prove nothing.  Done, and that last sentence was right: with
+      `fast_prefix()` returning 0 the entire suite still passes except the
+      byte counter, which is why there is one.  ASCII already in the form
+      goes 40 to 80 times faster (38.9 -> 1611 MB/s for NFD over 2.2MB) and
+      nothing measured gets slower.  Eight mutants, three of them survivors
+      first, all three because truncation, well-formedness and overlapping
+      buffers had only ever been checked on input where the fast path does
+      nothing.
+- [ ] resume the fast path after each slow segment
+      why: it is one prefix today, so a single precomposed character a hundred
+      bytes into a 2.2MB file costs the whole saving for the remaining 2.2MB
+      (39.0 MB/s instead of 1611), and mark-dense text gains nothing even when
+      it is fully normalised.  Not a one-line change: `in` and `out` may
+      overlap arbitrarily, which is why nothing is written until the whole
+      input has been read, and a loop that alternates copying and composing
+      has to preserve that.  The test already exists in the shape of the
+      counter, so the measurement is the deliverable.
 - [ ] streaming API: normalise at starter boundaries so a caller can feed
       chunks
       why: the whole-input buffer is the one hard ceiling in the contract, and
