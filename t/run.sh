@@ -159,6 +159,31 @@ head -c 400000 /dev/urandom > scratch/urandom.bin
 runq "nfx -r urandom" sh -c './t/nfx -r < scratch/urandom.bin 2>&1'
 runq "nfx -r empty" sh -c 'printf "" | ./t/nfx -r 2>&1'
 
+# The sanitizer is only as good as the buffer it is watching.  This case runs
+# under `make test-asan` alone, because a planted read past the end of a
+# malloc'd buffer is invisible without ASan -- and it was invisible WITH ASan
+# until t/nfx.c trimmed that buffer to the exact length of the input it read.
+#
+# ASAN_OPTIONS=exitcode=42 is the idea taken from tzf/t/run.sh next door: it
+# makes "the sanitizer reported something" distinguishable from "the program
+# died for any other reason", so this case cannot pass because the binary
+# segfaulted or failed to build.
+case "$CFLAGS" in
+*sanitize*)
+	printf '\n--- the planted over-read the sanitizer has to catch\n'
+	if build ./t/nfx-overread -DUTF8N_PLANT_OVERREAD t/nfx.c utf8n.c; then
+		head -c 1000 /dev/urandom > scratch/overread.bin
+		ASAN_OPTIONS=exitcode=42 ./t/nfx-overread -r \
+			< scratch/overread.bin >/dev/null 2>&1
+		if [ $? -eq 42 ]; then
+			say "ok - ASan sees a read one byte past the slurped input buffer, so that buffer is exactly sized"
+		else
+			say "not ok - ASan did NOT see a read one byte past the slurped input buffer: it is rounded up, and every other sanitizer result in raw mode is worth less than it looks"
+		fi
+	fi
+	;;
+esac
+
 # What the fast path is worth, measured every run rather than written down
 # once.  Comment lines, never "ok": a timing is not a pass or a fail, and a
 # suite that goes red because a machine was busy teaches nobody anything.

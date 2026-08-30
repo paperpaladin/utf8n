@@ -33,5 +33,5 @@ test-asan:
 		./t/run.sh
 
 clean:
-	rm -f utf8n.o t/unit t/conform t/nfx
+	rm -f utf8n.o t/unit t/conform t/nfx t/nfx-overread
 	rm -rf scratch

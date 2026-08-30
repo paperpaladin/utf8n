@@ -10,3 +10,6 @@ t/conform
 t/nfx
 # python bytecode from running tools/ or t/ scripts
 __pycache__/
+
+# built only by make test-asan, with a deliberate over-read planted
+t/nfx-overread

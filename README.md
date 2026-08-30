@@ -441,8 +441,35 @@ NEW  runq   :  ok=1  not-ok=1
 ```
 
 `tzf/t/run.sh` next door also sets `ASAN_OPTIONS=exitcode=`, which makes a
-sanitizer report distinguishable from an ordinary failure. This repo does
-not yet, and that is the next thing to take from it.
+sanitizer report distinguishable from an ordinary failure. This repo now does,
+in the one case that needs it: see the next section.
+
+### The sanitizer was watching a buffer bigger than its data
+
+`t/nfx -r` is the mode `make test-asan` points at 400kB of `/dev/urandom`, and
+it is the most attacker-shaped thing here: untrusted bytes, straight into the
+decoder.  Its input buffer grew by doubling, so after reading 400,000 bytes it
+was 524,288 bytes long, and a read one byte past the end of the data landed
+121KB inside a live allocation.  Planting exactly that read produced **zero
+sanitizer reports and a green suite**.
+
+This is the failure that `METHOD.md` records finding seven times in one
+session across the other repositories, and this was an eighth.  One `realloc`
+down to the exact length after the read loop fixes it, and the fix is only
+worth as much as the check that it stays: `-DUTF8N_PLANT_OVERREAD` builds a
+second binary with the over-read deliberately in it, and `make test-asan`
+requires that run to be killed.
+
+```
+ok - ASan sees a read one byte past the slurped input buffer, so that buffer
+     is exactly sized
+```
+
+With the `realloc` deleted that line reads `not ok` and says so in those
+words.  The case runs under `make test-asan` only, since a planted over-read
+is invisible without a sanitizer, and it checks for exit code 42 via
+`ASAN_OPTIONS=exitcode=42` rather than for any non-zero status, so it cannot
+pass because the binary happened to crash or fail to build.
 
 ## What does NOT work
 
@@ -511,8 +538,8 @@ t/run.sh                      builds and runs every oracle, prints the score
 t/conform.c                   NormalizationTest.txt
 t/unit.c                      assertions that need no downloaded data
 t/diff.py                     CPython differential with skew attribution
-t/nfx.c                       the filter diff.py drives, plus -r for raw bytes
-                              and -t for throughput
+t/nfx.c                       the filter diff.py drives, plus -r for raw bytes,
+                              -t for throughput, and the planted over-read
 ```
 
 Deliberate shortcuts are marked `shortcut:` in the source with the ceiling they
