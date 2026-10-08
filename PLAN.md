@@ -168,6 +168,14 @@ Ranked by how little we control them, strongest first.
       times.  One realloc to the exact length fixes it;
       -DUTF8N_PLANT_OVERREAD plus an exit-code-42 check under make test-asan
       is what keeps it fixed, and deleting the realloc turns that case red.
+- [x] a missing oracle reads as a skip, not as a failure
+      why: with ucd/ absent and CPython's ucd-15.1.0/ cached, t/run.sh ran
+      t/diff.py anyway and it died opening ucd/UnicodeData.txt, so the run
+      said "100 passed, 1 failed" next to a roster saying three oracles were
+      skipped.  Both halves of that are wrong: the failure is not a defect in
+      the code under test, and a reader cannot tell which of the two it is.
+      Found by moving ucd/ aside on purpose, which is the only way this path
+      ever gets exercised.
 - [ ] resume the fast path after each slow segment
       why: it is one prefix today, so a single precomposed character a hundred
       bytes into a 2.2MB file costs the whole saving for the remaining 2.2MB
