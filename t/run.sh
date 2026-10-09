@@ -59,9 +59,18 @@ fi
 
 printf '=== building (CC=%s)\n' "$CC"
 build ./t/unit t/unit.c utf8n.c || exit 1
+build ./t/conform t/conform.c utf8n.c || exit 1
 
 printf '\n--- unit assertions (UTF-8 policy, ordering, Hangul, exclusions)\n'
 ./t/unit 2>&1 | tee -a "$OUT"
+
+# Oracle 1: the official conformance file.  20 assertions per line that we did
+# not write, plus idempotence, plus its second requirement over every codepoint
+# it does not list.
+if [ "$HAVE_UCD" = 1 ]; then
+	printf '\n--- oracle 1: NormalizationTest.txt (UCD %s)\n' "$UCD_VER"
+	./t/conform ucd/NormalizationTest.txt 2>&1 | tee -a "$OUT"
+fi
 
 # The committed header must be exactly what the generator produces from this
 # UCD version: proof that the tables are reproducible rather than hand-edited,
