@@ -257,6 +257,88 @@ static void canonical_order(uint32_t *p, size_t n)
 	}
 }
 
+/* --- composition ----------------------------------------------------------
+ *
+ * compose_pair() is the primary-composite lookup.  The table it searches was
+ * built by inverting the canonical decompositions, minus Full_Composition_
+ * Exclusion, so three classes of pair are absent from it by construction and
+ * must stay absent: script-specific listed exclusions (U+0915 U+093C must not
+ * become U+0958), singleton decompositions (U+2126 OHM SIGN decomposes to
+ * U+03A9 and must never come back, which is what makes NFC lossy on purpose),
+ * and decompositions whose first character is not a starter.
+ *
+ * Hangul is arithmetic again, in two halves: L + V -> LV, and LV + T -> LVT.
+ * The second half only applies when the syllable has no trailer already, and
+ * b must be strictly greater than TBASE because TBASE is the filler slot.
+ */
+static uint32_t compose_pair(uint32_t a, uint32_t b)
+{
+	size_t lo = 0, hi = NELEM(utf8n_comp_tab);
+
+	if (a - LBASE < LCOUNT && b - VBASE < VCOUNT)
+		return SBASE + ((a - LBASE) * VCOUNT + (b - VBASE)) * TCOUNT;
+	if (a - SBASE < SCOUNT && (a - SBASE) % TCOUNT == 0 &&
+	    b > TBASE && b < TBASE + TCOUNT)
+		return a + (b - TBASE);
+
+	while (lo < hi) {
+		size_t m = lo + (hi - lo) / 2;
+		if (a < utf8n_comp_tab[m].a ||
+		    (a == utf8n_comp_tab[m].a && b < utf8n_comp_tab[m].b))
+			hi = m;
+		else if (a > utf8n_comp_tab[m].a ||
+			 (a == utf8n_comp_tab[m].a && b > utf8n_comp_tab[m].b))
+			lo = m + 1;
+		else
+			return utf8n_comp_tab[m].c;
+	}
+	return 0;
+}
+
+/* Canonical composition in place, over an already decomposed and ordered
+ * array.  Returns the new length.
+ *
+ * This is UAX #15's algorithm: walk forward holding the last starter, and
+ * compose the current character into it unless it is *blocked*.  Blocked means
+ * some character between the starter and here has a combining class greater
+ * than or equal to this one -- last_cc >= cc fails to compose -- which is why
+ * a+U+0300+U+0301 is U+00E0 U+0301 and not U+00E1 U+0300.  last_cc == 0 is the
+ * special case for "the starter is immediately before us", where nothing
+ * intervenes and composition is always allowed.
+ *
+ * The 256 is the standard's own trick for a leading non-starter: a string that
+ * begins with a combining mark has no starter to compose into, and setting
+ * last_cc above every real class (254 is the maximum) blocks everything until
+ * a real starter shows up.
+ */
+static size_t compose(uint32_t *p, size_t n)
+{
+	size_t starter = 0, w = 1, i;
+	int last_cc;
+
+	if (n == 0)
+		return 0;
+	last_cc = utf8n_ccc(p[0]);
+	if (last_cc != 0)
+		last_cc = 256;
+
+	for (i = 1; i < n; i++) {
+		uint32_t ch = p[i], comp;
+		int cc = utf8n_ccc(ch);
+
+		comp = compose_pair(p[starter], ch);
+		if (comp && (last_cc < cc || last_cc == 0)) {
+			p[starter] = comp;
+			continue;
+		}
+		if (cc == 0)
+			starter = w;
+		last_cc = cc;
+		p[w++] = ch;
+	}
+	return w;
+}
+
 size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		       char *out, size_t outcap)
 {
@@ -274,6 +356,8 @@ size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		return (size_t)-1;
 	}
 	canonical_order(b.p, b.n);
+	if (form == UTF8N_NFC || form == UTF8N_NFKC)
+		b.n = compose(b.p, b.n);
 
 	for (k = 0; k < b.n; k++) {
 		unsigned char tmp[4];

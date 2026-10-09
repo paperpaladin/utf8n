@@ -264,6 +264,72 @@ static void t_hangul(void)
 	     "1100 1161 11A8 0334 0301");
 }
 
+static void t_compose(void)
+{
+	eqcp(UTF8N_NFC, "e + U+0301 -> U+00E9", "0065 0301", "00E9");
+	eqcp(UTF8N_NFC, "already composed stays", "00E9", "00E9");
+	eqcp(UTF8N_NFC, "recomposes through two levels", "0063 0327 0301",
+	     "1E09");
+
+	/* The blocked-starter rule.  Both strings decompose to the same three
+	 * codepoints in the same order (equal classes are not reordered), and
+	 * NFC must compose a different one of them each time. */
+	eqcp(UTF8N_NFC, "U+0301 blocked by equal-class U+0300", "0061 0300 0301",
+	     "00E0 0301");
+	eqcp(UTF8N_NFC, "U+0300 blocked by equal-class U+0301", "0061 0301 0300",
+	     "00E1 0300");
+	/* Not blocked: the intervening mark has a lower class, so U+0301
+	 * reaches back past it to the starter. */
+	eqcp(UTF8N_NFC, "U+0301 composes past a lower-class mark",
+	     "0061 0334 0301", "00E1 0334");
+	eqcp(UTF8N_NFC, "composes past two lower-class marks",
+	     "0061 0334 0316 0301", "00E1 0334 0316");
+	/* Blocked by a starter. */
+	eqcp(UTF8N_NFC, "a starter blocks composition", "0061 0062 0301",
+	     "0061 0062 0301");
+	/* A string that begins with a combining mark has no starter to compose
+	 * into, and must not invent one. */
+	eqcp(UTF8N_NFC, "leading mark has no starter", "0301 0061",
+	     "0301 0061");
+	eqcp(UTF8N_NFC, "two leading marks", "0308 0301", "0308 0301");
+
+	/* Composition exclusions: U+0958 is in CompositionExclusions.txt, so
+	 * its own decomposition must not recompose. */
+	eqcp(UTF8N_NFC, "U+0915 U+093C does not become U+0958", "0915 093C",
+	     "0915 093C");
+	eqcp(UTF8N_NFC, "U+0958 decomposes and stays decomposed", "0958",
+	     "0915 093C");
+	eqcp(UTF8N_NFC, "U+FB1D does not recompose", "FB1D", "05D9 05B4");
+	/* Singletons must not come back. */
+	eqcp(UTF8N_NFC, "U+2126 OHM SIGN stays U+03A9", "2126", "03A9");
+	eqcp(UTF8N_NFC, "U+212B ANGSTROM SIGN becomes U+00C5", "212B", "00C5");
+	/* Non-starter decomposition: U+0344 decomposes to two marks, and a
+	 * composition table that did not exclude it would turn any U+0308
+	 * U+0301 back into it. */
+	eqcp(UTF8N_NFC, "U+0344 does not come back", "0308 0301", "0308 0301");
+	/* ...but a composite whose first character *is* a starter does come
+	 * back, so the exclusion is not a blanket ban on odd-looking pairs. */
+	eqcp(UTF8N_NFC, "U+03D2 U+0301 does become U+03D3", "03D2 0301",
+	     "03D3");
+
+	/* Hangul composition, both halves of the arithmetic. */
+	eqcp(UTF8N_NFC, "L V T -> syllable", "1100 1161 11A8", "AC01");
+	eqcp(UTF8N_NFC, "L V -> syllable", "1100 1161", "AC00");
+	eqcp(UTF8N_NFC, "LV + T -> LVT", "AC00 11A8", "AC01");
+	eqcp(UTF8N_NFC, "LVT + T does not compose", "AC01 11A8", "AC01 11A8");
+	eqcp(UTF8N_NFC, "L + T does not compose", "1100 11A8", "1100 11A8");
+	eqcp(UTF8N_NFC, "V + T alone does not compose", "1161 11A8",
+	     "1161 11A8");
+	eqcp(UTF8N_NFC, "U+11A7 is the filler, not a trailer", "AC00 11A7",
+	     "AC00 11A7");
+	eqcp(UTF8N_NFC, "round trip of the last syllable", "D7A3", "D7A3");
+
+	/* NFKC is NFKD followed by the same composition. */
+	eqcp(UTF8N_NFKC, "U+03D3 -> U+038E under NFKC", "03D3", "038E");
+	eqcp(UTF8N_NFKC, "U+00A0 -> SPACE under NFKC", "00A0", "0020");
+	eqcp(UTF8N_NFKC, "ligature U+FB01 -> f i", "FB01", "0066 0069");
+}
+
 static void t_decompose(void)
 {
 	/* Canonical decomposition, cases that need no reordering. */
@@ -304,5 +370,6 @@ int main(void)
 	t_decompose();
 	t_order();
 	t_hangul();
+	t_compose();
 	return failures != 0;
 }
