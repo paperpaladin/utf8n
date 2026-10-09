@@ -177,6 +177,23 @@ static void cpbuf_push(struct cpbuf *b, uint32_t cp)
 	b->p[b->n++] = cp;
 }
 
+/* --- Hangul --------------------------------------------------------------
+ *
+ * Hangul syllables are not in the decomposition table: UnicodeData.txt does not
+ * list them, and 11,172 records would dwarf everything else.  UAX #15 section
+ * 'Hangul Syllable Decomposition' gives the arithmetic instead, and these are
+ * its constant names.
+ */
+#define SBASE 0xAC00u
+#define LBASE 0x1100u
+#define VBASE 0x1161u
+#define TBASE 0x11A7u
+#define LCOUNT 19u
+#define VCOUNT 21u
+#define TCOUNT 28u
+#define NCOUNT (VCOUNT * TCOUNT)	/* 588 */
+#define SCOUNT (LCOUNT * NCOUNT)	/* 11172 */
+
 /* --- decomposition --------------------------------------------------------
  *
  * The table already holds the full, recursive decomposition, so this is one
@@ -186,9 +203,19 @@ static void cpbuf_push(struct cpbuf *b, uint32_t cp)
  */
 static void decompose(struct cpbuf *b, uint32_t cp, int compat)
 {
-	const struct utf8n_dec *d = dec_find(cp);
+	const struct utf8n_dec *d;
 	unsigned off, len, i;
 
+	if (cp - SBASE < SCOUNT) {		/* unsigned wrap is the range test */
+		uint32_t s = cp - SBASE, t = s % TCOUNT;
+
+		cpbuf_push(b, LBASE + s / NCOUNT);
+		cpbuf_push(b, VBASE + s % NCOUNT / TCOUNT);
+		if (t)				/* TBASE itself means 'no trailer' */
+			cpbuf_push(b, TBASE + t);
+		return;
+	}
+	d = dec_find(cp);
 	if (d) {
 		off = compat && d->k_len ? d->k_off : d->d_off;
 		len = compat && d->k_len ? d->k_len : d->d_len;
