@@ -4,6 +4,9 @@
  * One file, C11, no dependencies.  The tables in utf8n_table.h are generated
  * from the Unicode Character Database by tools/gen_tables.py.
  */
+#include <stdlib.h>
+#include <string.h>
+
 #include "utf8n.h"
 #include "utf8n_table.h"
 
@@ -127,4 +130,101 @@ int utf8n_ccc(uint32_t cp)
 			return utf8n_ccc_tab[m].ccc;
 	}
 	return 0;
+}
+static const struct utf8n_dec *dec_find(uint32_t cp)
+{
+	size_t lo = 0, hi = NELEM(utf8n_dec_tab);
+
+	while (lo < hi) {
+		size_t m = lo + (hi - lo) / 2;
+		if (cp < utf8n_dec_tab[m].cp)
+			hi = m;
+		else if (cp > utf8n_dec_tab[m].cp)
+			lo = m + 1;
+		else
+			return &utf8n_dec_tab[m];
+	}
+	return NULL;
+}
+
+/* --- the codepoint buffer -------------------------------------------------
+ *
+ * Normalisation is three passes over a codepoint array, so there is an array.
+ * It grows by doubling and lives for one call.  The worst-case expansion is
+ * U+FDFA, which decomposes to 18 codepoints under NFKD, but reserving 18n up
+ * front would mean a 72MB allocation for a 1MB input, so grow instead.
+ */
+struct cpbuf {
+	uint32_t *p;
+	size_t n, cap;
+	int err;
+};
+
+static void cpbuf_push(struct cpbuf *b, uint32_t cp)
+{
+	if (b->err)
+		return;
+	if (b->n == b->cap) {
+		size_t cap = b->cap ? b->cap * 2 : 64;
+		uint32_t *p = realloc(b->p, cap * sizeof *p);
+		if (!p) {
+			b->err = 1;
+			return;
+		}
+		b->p = p;
+		b->cap = cap;
+	}
+	b->p[b->n++] = cp;
+}
+
+/* --- decomposition --------------------------------------------------------
+ *
+ * The table already holds the full, recursive decomposition, so this is one
+ * lookup and a copy.  A codepoint with no decomposition, and a codepoint whose
+ * canonical decomposition is empty but whose compatibility decomposition is
+ * not, both fall through to "emit as is" via the zero length.
+ */
+static void decompose(struct cpbuf *b, uint32_t cp, int compat)
+{
+	const struct utf8n_dec *d = dec_find(cp);
+	unsigned off, len, i;
+
+	if (d) {
+		off = compat && d->k_len ? d->k_off : d->d_off;
+		len = compat && d->k_len ? d->k_len : d->d_len;
+		if (len) {
+			for (i = 0; i < len; i++)
+				cpbuf_push(b, utf8n_pool[off + i]);
+			return;
+		}
+	}
+	cpbuf_push(b, cp);
+}
+
+size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
+		       char *out, size_t outcap)
+{
+	int compat = form == UTF8N_NFKD || form == UTF8N_NFKC;
+	struct cpbuf b = {NULL, 0, 0, 0};
+	size_t i = 0, need = 0, k;
+
+	while (i < inlen) {
+		uint32_t cp;
+		i += utf8n_decode((const unsigned char *)in + i, inlen - i, &cp);
+		decompose(&b, cp, compat);
+	}
+	if (b.err) {
+		free(b.p);
+		return (size_t)-1;
+	}
+
+	for (k = 0; k < b.n; k++) {
+		unsigned char tmp[4];
+		size_t w = utf8n_encode(b.p[k], tmp);
+		if (need + w <= outcap)
+			memcpy(out + need, tmp, w);
+		need += w;
+	}
+	free(b.p);
+	return need;
 }

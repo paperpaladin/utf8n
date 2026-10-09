@@ -145,9 +145,69 @@ static void t_ccc(void)
 	   utf8n_ucd_version());
 }
 
+/* Normalise a NUL-terminated UTF-8 string into a static buffer.  Only the
+ * tests get to be this careless about size. */
+static const char *nf(enum utf8n_form form, const char *s)
+{
+	static char buf[4][512];
+	static int turn;
+	char *out = buf[turn = (turn + 1) & 3];
+	size_t n = utf8n_normalize(form, s, strlen(s), out, sizeof buf[0] - 1);
+
+	if (n == (size_t)-1 || n >= sizeof buf[0])
+		return "<overflow>";
+	out[n] = 0;
+	return out;
+}
+
+static void eq(enum utf8n_form form, const char *in, const char *want,
+	       const char *name)
+{
+	const char *got = nf(form, in);
+	static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
+
+	if (strcmp(got, want) != 0)
+		printf("# %s(%s): got %s want %s\n", fname[form], in, got, want);
+	ok(strcmp(got, want) == 0, "%s %s", fname[form], name);
+}
+
+static void t_decompose(void)
+{
+	/* Canonical decomposition, cases that need no reordering. */
+	eq(UTF8N_NFD, "A", "A", "ASCII is unchanged");
+	eq(UTF8N_NFD, "\xC3\xA9", "e\xCC\x81", "U+00E9 -> e + U+0301");
+	/* U+1E09 c-cedilla-acute decomposes recursively through U+00E7. */
+	eq(UTF8N_NFD, "\xE1\xB8\x89", "c\xCC\xA7\xCC\x81",
+	   "U+1E09 decomposes recursively (two levels)");
+	/* A singleton: U+212B ANGSTROM SIGN -> U+00C5 -> A + U+030A. */
+	eq(UTF8N_NFD, "\xE2\x84\xAB", "A\xCC\x8A",
+	   "U+212B singleton decomposes through U+00C5");
+	/* Compatibility only: the no-break space has a <noBreak> decomposition,
+	 * so NFD must leave it alone and NFKD must not. */
+	eq(UTF8N_NFD, "\xC2\xA0", "\xC2\xA0",
+	   "U+00A0 is unchanged (compatibility decomposition only)");
+	eq(UTF8N_NFKD, "\xC2\xA0", " ", "U+00A0 -> SPACE");
+	/* Ill-formed input is replaced, then normalised. */
+	eq(UTF8N_NFD, "\xC3\xA9\xFF\xC3\xA9", "e\xCC\x81\xEF\xBF\xBD" "e\xCC\x81",
+	   "ill-formed byte becomes U+FFFD between two decompositions");
+
+	/* The snprintf convention: outcap 0 sizes the result. */
+	ok(utf8n_normalize(UTF8N_NFD, "\xC3\xA9", 2, NULL, 0) == 3,
+	   "outcap 0 returns the needed length");
+	{
+		char small[2] = {1, 1};
+		ok(utf8n_normalize(UTF8N_NFD, "\xC3\xA9", 2, small, 2) == 3 &&
+		   small[0] == 'e',
+		   "a short buffer is filled as far as it goes");
+	}
+	ok(utf8n_normalize(UTF8N_NFD, "", 0, NULL, 0) == 0,
+	   "empty input gives empty output");
+}
+
 int main(void)
 {
 	t_utf8();
 	t_ccc();
+	t_decompose();
 	return failures != 0;
 }

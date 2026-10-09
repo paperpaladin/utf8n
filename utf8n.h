@@ -7,6 +7,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum utf8n_form { UTF8N_NFD, UTF8N_NFC, UTF8N_NFKD, UTF8N_NFKC };
+
+/* Normalise in[0..inlen) to the given form, writing UTF-8 to out.  Returns the
+ * number of bytes the result needs; at most outcap of them are written, so the
+ * snprintf convention applies -- call with outcap 0 to size the buffer, then
+ * again to fill it.  Returns (size_t)-1, and writes nothing, if the internal
+ * codepoint buffer cannot be allocated.  Ill-formed input is replaced per
+ * utf8n_decode(), so the result is always well-formed UTF-8. */
+size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
+		       char *out, size_t outcap);
+
 /* Decode one codepoint from s[0..n).  Returns the number of bytes consumed,
  * which is never 0 for n > 0.  Ill-formed input yields U+FFFD and consumes the
  * maximal ill-formed subpart (Unicode 16.0 table 3-7 / TR#36), so a decoder
