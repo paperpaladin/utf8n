@@ -201,6 +201,19 @@ def main():
     skewed += compare('every Hangul L V (T) jamo sequence', nfx, jamo, changed,
             ourver, pyver)
 
+    # Degenerate input: long runs of combining marks.  This is where the
+    # O(n^2) insertion sort and the doubling buffer get exercised, and where an
+    # implementation with a fixed-size reordering window gives wrong answers
+    # rather than crashing.
+    rnd = random.Random(1009)
+    degen = []
+    for n in (33, 64, 100, 500, 2000):
+        ms = [rnd.choice(marks) for _ in range(n)]
+        degen.append(tuple([0x61] + ms))
+        degen.append(tuple(ms))
+    skewed += compare('runs of 33..2000 combining marks', nfx, degen, changed,
+                      ourver, pyver)
+
     # Idempotence is checked in C over the conformance corpus; here it is
     # checked over this corpus too, against CPython's own second application.
     marks_only = [(m,) for m in marks] + [(m, 0x61) for m in marks]

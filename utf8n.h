@@ -10,11 +10,19 @@
 enum utf8n_form { UTF8N_NFD, UTF8N_NFC, UTF8N_NFKD, UTF8N_NFKC };
 
 /* Normalise in[0..inlen) to the given form, writing UTF-8 to out.  Returns the
- * number of bytes the result needs; at most outcap of them are written, so the
- * snprintf convention applies -- call with outcap 0 to size the buffer, then
- * again to fill it.  Returns (size_t)-1, and writes nothing, if the internal
- * codepoint buffer cannot be allocated.  Ill-formed input is replaced per
- * utf8n_decode(), so the result is always well-formed UTF-8. */
+ * number of bytes the result needs, as snprintf does -- call with outcap 0 to
+ * size the buffer, then again to fill it.
+ *
+ * On truncation it writes the longest *whole-codepoint* prefix of the result
+ * that fits in outcap, and leaves the remaining bytes of out untouched.  It
+ * does not write a partial codepoint, because a caller handed back ill-formed
+ * UTF-8 is worse off than one handed back a short string; the bytes between
+ * that prefix and outcap are therefore not written at all, which is the one
+ * place this deviates from snprintf, and it is deliberate.
+ *
+ * Returns (size_t)-1, and writes nothing, if the internal codepoint buffer
+ * cannot be allocated.  Ill-formed input is replaced per utf8n_decode(), so
+ * the result is always well-formed UTF-8 whether truncated or not. */
 size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		       char *out, size_t outcap);
 

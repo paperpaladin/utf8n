@@ -364,6 +364,10 @@ size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 	if (form == UTF8N_NFC || form == UTF8N_NFKC)
 		b.n = compose(b.p, b.n);
 
+	/* A codepoint that would straddle outcap is not written at all, and
+	 * neither is anything after it, since need only grows: what lands in
+	 * out is the longest whole-codepoint prefix that fits.  See the
+	 * contract in utf8n.h. */
 	for (k = 0; k < b.n; k++) {
 		unsigned char tmp[4];
 		size_t w = utf8n_encode(b.p[k], tmp);
