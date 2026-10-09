@@ -135,6 +135,14 @@ def main():
         recs.append((cp, intern(nfd) if nfd else 0, len(nfd),
                      intern(nfkd) if nfkd else 0, len(nfkd)))
 
+    maxexp = max(max(r[2], r[4]) for r in recs)
+    if len(pool) > 0xFFFF:
+        raise SystemExit('pool has %d words, offsets no longer fit in uint16; '
+                         'widen struct utf8n_dec' % len(pool))
+    if maxexp > 0xFF:
+        raise SystemExit('longest decomposition is %d, no longer fits in uint8'
+                         % maxexp)
+
     # CCC as ranges.
     cccr = []
     for cp in sorted(ccc):
@@ -154,7 +162,11 @@ def main():
       ' * SPDX-License-Identifier: GPL-3.0-or-later\n'
       ' * Source: Unicode Character Database %s\n'
       ' */\n#ifndef UTF8N_TABLE_H\n#define UTF8N_TABLE_H\n#include <stdint.h>\n\n'
-      '#define UTF8N_UCD_VERSION "%s"\n\n' % (ver, ver))
+      '#define UTF8N_UCD_VERSION "%s"\n\n'
+      '/* Longest decomposition of a single codepoint, in codepoints: the\n'
+      ' * expansion factor a caller sizing a fixed buffer has to allow for.\n'
+      ' * U+FDFA under NFKD is what sets it. */\n'
+      '#define UTF8N_MAX_EXPANSION %d\n\n' % (ver, ver, maxexp))
     e('/* Fully expanded decomposition sequences, shared by NFD and NFKD. */\n'
       'static const uint32_t utf8n_pool[%d] = {' % len(pool))
     for i, c in enumerate(pool):

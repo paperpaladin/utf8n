@@ -114,6 +114,11 @@ const char *utf8n_ucd_version(void)
 	return UTF8N_UCD_VERSION;
 }
 
+int utf8n_max_expansion(void)
+{
+	return UTF8N_MAX_EXPANSION;
+}
+
 #define NELEM(a) (sizeof(a) / sizeof(a)[0])
 
 int utf8n_ccc(uint32_t cp)

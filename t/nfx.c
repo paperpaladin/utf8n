@@ -22,9 +22,10 @@
 #include <string.h>
 
 #include "../utf8n.h"
+#include "../utf8n_table.h"
 
 #define MAXCP 4096
-#define MAXBYTES (MAXCP * 4 * 18 + 4)
+#define MAXBYTES (MAXCP * 4 * UTF8N_MAX_EXPANSION + 4)
 
 static size_t parse_hex(char *line, uint32_t *out, size_t cap)
 {

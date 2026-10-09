@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "../utf8n.h"
+#include "../utf8n_table.h"
 
 #define MAXCOL 64
 #define MAXLINE 8192
@@ -82,7 +83,7 @@ static void show(int part, long lineno, const char *what, enum utf8n_form f,
 static void check(int part, long lineno, const char *what, enum utf8n_form f,
 		  const struct str *in, const struct str *want)
 {
-	char got[MAXCOL * 4 * 18 + 1];
+	char got[MAXCOL * 4 * UTF8N_MAX_EXPANSION + 1];
 	size_t n = utf8n_normalize(f, in->b, in->n, got, sizeof got - 1);
 
 	if (n == (size_t)-1 || n >= sizeof got) {
@@ -102,7 +103,7 @@ static void check(int part, long lineno, const char *what, enum utf8n_form f,
 static void check_idem(int part, long lineno, enum utf8n_form f,
 		       const struct str *x)
 {
-	char once[MAXCOL * 4 * 18 + 1], twice[sizeof once];
+	char once[MAXCOL * 4 * UTF8N_MAX_EXPANSION + 1], twice[sizeof once];
 	size_t a = utf8n_normalize(f, x->b, x->n, once, sizeof once - 1);
 	size_t b;
 

@@ -8,6 +8,11 @@
 
 #define UTF8N_UCD_VERSION "18.0.0"
 
+/* Longest decomposition of a single codepoint, in codepoints: the
+ * expansion factor a caller sizing a fixed buffer has to allow for.
+ * U+FDFA under NFKD is what sets it. */
+#define UTF8N_MAX_EXPANSION 18
+
 /* Fully expanded decomposition sequences, shared by NFD and NFKD. */
 static const uint32_t utf8n_pool[6828] = {
 	0x0020, 0x0020, 0x0308, 0x0061, 0x0020, 0x0304, 0x0032, 0x0033,
