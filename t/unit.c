@@ -418,6 +418,25 @@ static void t_decompose(void)
 	}
 	ok(utf8n_normalize(UTF8N_NFD, "", 0, NULL, 0) == 0,
 	   "empty input gives empty output");
+
+	/* In place, which works only because the input is fully decoded before
+	 * anything is written back.  Both directions matter: NFD of this string
+	 * is longer than the input and NFC of that is shorter. */
+	{
+		char buf[64];
+		size_t n;
+		memcpy(buf, "\xC3\xA9\xC3\xA8x", 5);
+		n = utf8n_normalize(UTF8N_NFD, buf, 5, buf, sizeof buf);
+		ok(n == 7 && memcmp(buf, "e\xCC\x81" "e\xCC\x80x", 7) == 0,
+		   "NFD in place, growing (%zu bytes)", n);
+		n = utf8n_normalize(UTF8N_NFC, buf, 7, buf, sizeof buf);
+		ok(n == 5 && memcmp(buf, "\xC3\xA9\xC3\xA8x", 5) == 0,
+		   "NFC in place, shrinking (%zu bytes)", n);
+	}
+
+	/* An embedded NUL is data, not a terminator: the API takes a length. */
+	ok(utf8n_normalize(UTF8N_NFD, "\xC3\xA9\0\xC3\xA9", 5, NULL, 0) == 7,
+	   "an embedded NUL is normalised through, not stopped at");
 }
 
 int main(void)

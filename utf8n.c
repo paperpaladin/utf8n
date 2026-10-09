@@ -356,6 +356,10 @@ size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 	struct cpbuf b = {NULL, 0, 0, 0};
 	size_t i = 0, need = 0, k;
 
+	/* The input is fully consumed here, before a single byte of out is
+	 * written below, which is what makes in == out legal.  Keep it that
+	 * way: fusing the encode into this loop to save the buffer would
+	 * silently break every in-place caller. */
 	while (i < inlen) {
 		uint32_t cp;
 		i += utf8n_decode((const unsigned char *)in + i, inlen - i, &cp);
