@@ -246,6 +246,11 @@ static void decompose(struct cpbuf *b, uint32_t cp, int compat)
  * the oracle to trust here is idempotence over a corpus and not a hand-written
  * ordering check.  Starters have class 0 and so are never crossed.
  */
+/* shortcut: insertion sort, O(n^2) within one run of combining marks.  Runs in
+ * real text are 1 to 4 long (the UCD's own test data tops out at 4), so this is
+ * the right shape; an adversary sending a million marks on one base gets
+ * quadratic time.  Upgrade path if that matters: cap the run length and fall
+ * back to a merge sort above it, which stays stable. */
 static void canonical_order(uint32_t *p, size_t n)
 {
 	size_t i, j;
@@ -349,6 +354,12 @@ static size_t compose(uint32_t *p, size_t n)
 	return w;
 }
 
+/* shortcut: no quick-check fast path.  Already-normalised text, which is most
+ * text, is decomposed and recomposed in full anyway.  Upgrade path: the
+ * NFC_QC/NFD_QC properties from DerivedNormalizationProps.txt, emitted as a
+ * fifth table, skipping any run of codepoints that are QC_Yes with combining
+ * class 0.  Deliberately not done: it is a second code path that the
+ * conformance file would mostly not exercise. */
 size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		       char *out, size_t outcap)
 {
