@@ -100,6 +100,40 @@ static void t_utf8(void)
 		   "(%d bad)", bad);
 	}
 
+	/* utf8n_decode() must never claim to have consumed more than it was
+	 * given.  A truncated sequence at the end of the buffer is the case
+	 * that gets this wrong -- returning the sequence's nominal length
+	 * instead of what was actually there -- and no normalisation test can
+	 * see it, because our own loop stops at inlen either way.  A caller
+	 * that advances by the return value walks off the end.
+	 * Exhaustive over every 1, 2 and 3 byte sequence. */
+	{
+		unsigned a, b2, c3;
+		long bad = 0;
+		uint32_t cp;
+		unsigned char s[3];
+		for (a = 0; a < 256; a++) {
+			s[0] = (unsigned char)a;
+			if (utf8n_decode(s, 1, &cp) != 1)
+				bad++;
+			for (b2 = 0; b2 < 256; b2++) {
+				size_t r;
+				s[1] = (unsigned char)b2;
+				r = utf8n_decode(s, 2, &cp);
+				if (r < 1 || r > 2)
+					bad++;
+				for (c3 = 0; c3 < 256; c3++) {
+					s[2] = (unsigned char)c3;
+					r = utf8n_decode(s, 3, &cp);
+					if (r < 1 || r > 3)
+						bad++;
+				}
+			}
+		}
+		ok(bad == 0, "decode consumes 1..n bytes for all 16.8M "
+		   "sequences of length 1, 2 and 3 (%ld bad)", bad);
+	}
+
 	/* Surrogates and out-of-range encode as U+FFFD, never as invalid UTF-8. */
 	{
 		unsigned char b[4];
@@ -255,6 +289,19 @@ static void t_hangul(void)
 	 * unassigned, which is exactly the off-by-one a <= test would eat. */
 	eqcp(UTF8N_NFD, "U+ABFF is not a syllable", "ABFF", "ABFF");
 	eqcp(UTF8N_NFD, "U+D7A4 is not a syllable", "D7A4", "D7A4");
+	/* The composition side of the same boundary.  U+D7A4 is one past the
+	 * block and (U+D7A4 - SBASE) % TCOUNT happens to be 0, so a range test
+	 * written as <= SCOUNT composes it with a following trailing jamo into
+	 * a codepoint outside the Hangul block entirely.  NormalizationTest.txt
+	 * cannot catch that -- U+D7A4 is unassigned, so it lists no such
+	 * sequence -- which is why this case is here by hand. */
+	eqcp(UTF8N_NFC, "U+D7A4 does not absorb a trailing jamo", "D7A4 11A8",
+	     "D7A4 11A8");
+	eqcp(UTF8N_NFC, "U+ABFF does not absorb a trailing jamo", "ABFF 11A8",
+	     "ABFF 11A8");
+	eqcp(UTF8N_NFC, "U+D7A3 (last syllable) has a trailer already",
+	     "D7A3 11A8", "D7A3 11A8");
+
 	/* Jamo are starters, so a decomposed syllable survives reordering. */
 	eqcp(UTF8N_NFKD, "NFKD decomposes syllables too", "AC01",
 	     "1100 1161 11A8");

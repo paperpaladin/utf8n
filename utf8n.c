@@ -309,7 +309,12 @@ static uint32_t compose_pair(uint32_t a, uint32_t b)
  * The 256 is the standard's own trick for a leading non-starter: a string that
  * begins with a combining mark has no starter to compose into, and setting
  * last_cc above every real class (254 is the maximum) blocks everything until
- * a real starter shows up.
+ * a real starter shows up.  Honesty about this line: removing it changes no
+ * answer, and no oracle in this repo fails without it, because a pair whose
+ * first character is a non-starter is a Full_Composition_Exclusion and is
+ * therefore absent from the table anyway, so compose_pair() already returns 0.
+ * It stays because it is the published formulation and because that argument
+ * depends on the exclusion table being right, which is a different file's job.
  */
 static size_t compose(uint32_t *p, size_t n)
 {
