@@ -5,6 +5,7 @@
  * from the Unicode Character Database by tools/gen_tables.py.
  */
 #include "utf8n.h"
+#include "utf8n_table.h"
 
 /* --- UTF-8 ---------------------------------------------------------------
  *
@@ -92,4 +93,38 @@ size_t utf8n_encode(uint32_t cp, unsigned char *out)
 	out[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
 	out[3] = (unsigned char)(0x80 | (cp & 0x3F));
 	return 4;
+}
+
+/* --- tables ---------------------------------------------------------------
+ *
+ * Three binary searches over generated, sorted arrays.  No hashing, no
+ * two-stage trie: at 422 combining-class ranges and 5982 decomposition records
+ * a search is 9 and 13 comparisons, which is not the bottleneck in a routine
+ * that also walks the string four times.
+ * shortcut: linear-memory whole-input buffering and binary-search lookups;
+ * if this ever shows up in a profile, the upgrade is a two-stage trie keyed on
+ * the top 13 bits plus a quick-check table to skip already-normalised runs.
+ */
+
+const char *utf8n_ucd_version(void)
+{
+	return UTF8N_UCD_VERSION;
+}
+
+#define NELEM(a) (sizeof(a) / sizeof(a)[0])
+
+int utf8n_ccc(uint32_t cp)
+{
+	size_t lo = 0, hi = NELEM(utf8n_ccc_tab);
+
+	while (lo < hi) {
+		size_t m = lo + (hi - lo) / 2;
+		if (cp < utf8n_ccc_tab[m].lo)
+			hi = m;
+		else if (cp > utf8n_ccc_tab[m].hi)
+			lo = m + 1;
+		else
+			return utf8n_ccc_tab[m].ccc;
+	}
+	return 0;
 }

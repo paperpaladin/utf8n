@@ -17,4 +17,10 @@ size_t utf8n_decode(const unsigned char *s, size_t n, uint32_t *cp);
  * values above U+10FFFF are encoded as U+FFFD rather than as invalid UTF-8. */
 size_t utf8n_encode(uint32_t cp, unsigned char *out);
 
+/* Canonical_Combining_Class of cp, 0 for a starter. */
+int utf8n_ccc(uint32_t cp);
+
+/* Version of the Unicode Character Database the tables were generated from. */
+const char *utf8n_ucd_version(void);
+
 #endif /* UTF8N_H */
