@@ -192,6 +192,41 @@ truncation check asserted snprintf semantics that `utf8n_normalize` does not
 implement and should not, which is how the whole-codepoint-prefix contract came
 to be written down.
 
+## Every oracle's exit status is now checked
+
+Each oracle used to run as `./t/conform ... 2>&1 | tee -a "$OUT"`, which
+discards the status twice: a pipeline's status is `tee`'s, and nothing looked
+at it either way. The score is counted by grepping the log for `ok - ` lines,
+and nothing asserts how many there should be.
+
+So a test binary that died partway through left its earlier `ok` lines in
+the file, emitted no `not ok`, and the suite printed "N passed, 0 failed"
+with a smaller N. **The 806,840 conformance assertions could have become a
+few dozen with the suite green.** Under `make test-asan` the discarded
+status was ASan's exit 1.
+
+Worse, it defeated the roster -- which is this repo's best idea. `conf_state`
+is read with `grep '^conformance score' "$OUT" | tail -1`, so a `t/conform`
+that crashed before printing its score left that variable **empty**, and an
+empty string does not match the `*SKIPPED*` case. The "an external oracle
+did not run" warning never fired. The one mechanism built to stop a skipped
+oracle looking like a passing one was bypassed by the failure mode most
+likely to occur.
+
+All five oracles go through one `runq` helper now, which captures the status,
+prints the output, and emits a `not ok` line naming the exit code when it is
+non-zero. Measured on the helper, against a command that prints one `ok` line
+and exits 134:
+
+```
+OLD  | tee :  ok=1  not-ok=0
+NEW  runq   :  ok=1  not-ok=1
+```
+
+`tzf/t/run.sh` next door also sets `ASAN_OPTIONS=exitcode=`, which makes a
+sanitizer report distinguishable from an ordinary failure. This repo does
+not yet, and that is the next thing to take from it.
+
 ## What does NOT work
 
 Stated plainly, because a README that only lists successes is not finished.
