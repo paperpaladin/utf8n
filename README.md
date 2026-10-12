@@ -266,7 +266,8 @@ Stated plainly, because a README that only lists successes is not finished.
 - **`utf8n_encode` silently substitutes U+FFFD** for a surrogate or an
   out-of-range value rather than reporting the error.  A caller that wants to
   know its codepoint was invalid has to range-check first.
-- The committed table header is **261KB of C** (119KB of `.rodata`): 5982
+- The committed table header is **261KB of C** (113KiB of `.rodata`, 115,760
+  bytes by `size -A`): 5982
   decomposition records, 6828 pool words, 422 combining-class ranges, 961
   primary composites.  Justified because it is the whole UCD rather than a
   Latin-1-and-hope subset, and because the alternative -- parsing
@@ -278,7 +279,7 @@ Stated plainly, because a README that only lists successes is not finished.
 ## Files
 
 ```
-utf8n.c            389 lines   the implementation
+utf8n.c            400 lines   the implementation
 utf8n.h             56 lines   the contract, including the ill-formed policy
 utf8n_table.h      261 KB      GENERATED -- do not edit
 tools/gen_tables.py           reads the UCD, derives and checks the exclusions
