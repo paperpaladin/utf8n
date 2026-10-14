@@ -70,7 +70,7 @@ const char *utf8n_ucd_version(void);  /* "18.0.0" */
 
 `utf8n_normalize` returns the number of bytes the result needs and writes at
 most `outcap`, so the snprintf convention: call once with `outcap` 0 to size,
-once to fill.  It deviates from snprintf in one way, deliberately: on
+once to fill.  It deviates from snprintf in one way, deliberately. On
 truncation it writes the longest *whole-codepoint* prefix that fits and leaves
 the rest of the buffer untouched, instead of cutting a UTF-8 sequence in half.
 `in` and `out` may be the same buffer.  The only failure return is `(size_t)-1`
