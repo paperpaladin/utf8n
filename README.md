@@ -209,8 +209,7 @@ Worse, it defeated the roster, which is this repo's best idea. `conf_state`
 is read with `grep '^conformance score' "$OUT" | tail -1`, so a `t/conform`
 that crashed before printing its score left that variable empty, and an
 empty string does not match the `*SKIPPED*` case. The "an external oracle
-did not run" warning never fired. The one mechanism built to stop a skipped
-oracle looking like a passing one was bypassed by the failure mode most
+did not run" warning never fired. One mechanism built to stop a skipped oracle looking like a passing one was bypassed by the failure mode most
 likely to occur.
 
 All five oracles go through one `runq` helper now, which captures the status,
