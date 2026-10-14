@@ -235,7 +235,7 @@ Stated plainly, because a README that only lists successes is not finished.
   the output, and a 1GB input needs the lot at once.  There is no way to feed it
   a chunk at a time.  Normalisation is only segmentable at starter boundaries,
   so a streaming version is a real design, not a flag.
-- `realloc` failure is reported, not survived.  `(size_t)-1` and nothing
+- `realloc` failure is reported, and the program stops there.  `(size_t)-1` and nothing
   written.  No fixed-buffer mode, no caller-supplied allocator.
 - No quick-check fast path.  Already-NFC text is fully decomposed and
   recomposed anyway, the single largest performance item here and is
@@ -247,7 +247,7 @@ Stated plainly, because a README that only lists successes is not finished.
   tested up to 2000 marks, but a crafted input of a million marks on one base
   will take quadratic time.  An insertion sort is the right shape for runs of
   2-4 and the wrong shape for an adversary.
-- Binary search, not a trie.  9 comparisons for a combining class, 13 for a
+- Binary search, with no trie.  9 comparisons for a combining class, 13 for a
   decomposition, per codepoint, three passes.  Roughly 3x slower than a
   two-stage table and about 100 lines shorter.
 - Not thread-hostile but not thread-aware either.  No global state, so
@@ -268,8 +268,7 @@ Stated plainly, because a README that only lists successes is not finished.
 - The committed table header is **261KB of C** (113KiB of `.rodata`, 115,760
   bytes by `size -A`): 5982
   decomposition records, 6828 pool words, 422 combining-class ranges, 961
-  primary composites.  Justified because it is the whole UCD, not a
-  Latin-1-and-hope subset, and because the alternative, parsing
+  primary composites.  Justified because it is the whole UCD and no Latin-1-and-hope subset, and because the alternative, parsing
   `UnicodeData.txt` at startup, makes a C library depend on a 2.2MB data file
   being installed and correct.  It compresses to about 40KB in git, and it is
   regenerated and diffed byte for byte by `make test`, so it cannot drift from
