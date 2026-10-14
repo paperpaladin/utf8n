@@ -10,7 +10,7 @@ Unicode normalisation forms.
   of bytes the result needs, writing at most `outcap` of them, so the snprintf
   calling convention: call once to size, once to fill.
 - `utf8n_decode()` / `utf8n_encode()` are the UTF-8 layer, public because the
-  replacement policy for ill-formed input is part of the contract rather than an
+  replacement policy for ill-formed input is part of the contract, not an
   implementation detail.
 - `utf8n_ccc()` exposes Canonical_Combining_Class, because the canonical
   ordering test has to be able to check it independently.
@@ -23,8 +23,8 @@ Unicode normalisation forms.
 
 For every one of the 20,171 non-comment lines of `NormalizationTest.txt`, all
 twenty equalities that line asserts hold, and additionally every form is
-idempotent on all five columns -- `f(f(x)) == f(x)` for f in NFC, NFD, NFKC,
-NFKD.  Conformance is not "most lines pass"; the file is the specification of
+idempotent on all five columns: `f(f(x)) == f(x)` for f in NFC, NFD, NFKC,
+NFKD.  Conformance is not "most lines pass". The file is the specification of
 what the four functions mean, and a failing line is a wrong answer.
 
 Two consequences shape the code.  Idempotence over an external corpus is what
@@ -37,25 +37,25 @@ table that forgets exclusions cannot pass by accident.
 
 Ranked by how little we control them, strongest first.
 
-1. **`NormalizationTest.txt` from the UCD.**  Official conformance data,
+1. `NormalizationTest.txt` from the UCD.  Official conformance data,
    19,000-odd lines, each asserting twenty equalities we did not choose.
    `t/conform.c` runs all of them plus idempotence, and prints a score.
-2. **`DerivedNormalizationProps.txt`, property `Full_Composition_Exclusion`.**
+2. `DerivedNormalizationProps.txt`, property `Full_Composition_Exclusion`.
    `tools/gen_tables.py` *derives* that set (listed exclusions, plus singleton
    decompositions, plus non-starter decompositions) and then asserts its derived
    set equals the UCD's published one, exactly, or refuses to emit tables.  This
    is the oracle for the composition-exclusion rules, and it is independent of
    the normalisation test data.
-3. **CPython's `unicodedata.normalize`.**  Available offline, so it is the
+3. CPython's `unicodedata.normalize`.  Available offline, so it is the
    oracle when the UCD files cannot be fetched.  `t/diff.py` compares all four
    forms over the whole BMP plus a sample of the astral planes.  Python's UCD
    version differs from ours, so disagreements are classified against the two
    `UnicodeData.txt` files: a disagreement is tolerated only when the codepoint
    involved demonstrably changed between the two versions, and anything else
    fails the run.
-4. **CPython's UTF-8 decoder.**  `bytes.decode('utf-8', errors='replace')`
+4. CPython's UTF-8 decoder.  `bytes.decode('utf-8', errors='replace')`
    implements the same maximal-subpart policy, so `t/diff.py` checks ill-formed
-   input against it rather than against our own opinion.
+   input against it, not against our own opinion.
 
 ## Non-goals
 
@@ -92,8 +92,8 @@ Ranked by how little we control them, strongest first.
       now pinned by hand.
 - [x] `t/diff.py`: differential against CPython with version-skew attribution
       why: the only oracle that works offline, and the one that needs the most
-      discipline -- 6420 codepoints differ between UCD 15.1.0 and 18.0.0, so
-      skew has to be proved per codepoint rather than claimed.
+      discipline: 6420 codepoints differ between UCD 15.1.0 and 18.0.0, so
+      skew has to be proved per codepoint, not claimed.
 - [x] hostile input: 400kB of /dev/urandom through all four forms under ASAN
       why: we decode untrusted bytes; the sizing contract, well-formedness,
       idempotence and clean truncation all have to hold for input nobody
@@ -108,9 +108,9 @@ Ranked by how little we control them, strongest first.
 
 - [ ] `NFC_QC`/`NFD_QC` quick-check tables and the skip-ahead fast path
       why: it is the single largest performance item and the only one with a
-      published oracle -- the quick-check properties are in the UCD, so the
-      fast path's decisions can be diffed against them for every codepoint
-      rather than trusted.  Nothing else in this list is measurable.
+      published oracle: the quick-check properties are in the UCD, so the
+      fast path's decisions can be diffed against them for every
+      codepoint, not trusted.  Nothing else in this list is measurable.
 - [ ] streaming API: normalise at starter boundaries so a caller can feed
       chunks
       why: the whole-input buffer is the one hard ceiling in the contract, and
