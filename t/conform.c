@@ -23,6 +23,13 @@
 #include "../utf8n.h"
 #include "../utf8n_table.h"
 
+/* t/run.sh compiles this file with -DUTF8N_STATS, which is what makes these
+ * two counters exist in utf8n.c; a build without it fails to link, loudly,
+ * rather than quietly skipping the assertion they are here for.  The fast
+ * path returns identical answers when it is never taken, so every value
+ * check in this file passes with it disabled and only the counters notice. */
+extern unsigned long utf8n_stat_fast_bytes, utf8n_stat_calls;
+
 #define MAXCOL 64
 #define MAXLINE 8192
 #define MAXPART 8
@@ -31,7 +38,7 @@
 static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
 static long pass[MAXPART], fail[MAXPART], lines[MAXPART], badlines[MAXPART];
-static long qc_pass, qc_fail, qc_seen[3];
+static long qc_pass, qc_fail, qc_seen[3], fast_bad, fast_checked;
 static long shown;
 static unsigned char part1[(0x110000 + 7) / 8];
 
@@ -139,9 +146,26 @@ static void check_idem(int part, long lineno, enum utf8n_form f,
 static void check_qc(long lineno, enum utf8n_form f, const struct str *x)
 {
 	char got[MAXCOL * 4 * UTF8N_MAX_EXPANSION + 1];
+	unsigned long before = utf8n_stat_fast_bytes;
 	size_t n = utf8n_normalize(f, x->b, x->n, got, sizeof got - 1);
+	unsigned long copied = utf8n_stat_fast_bytes - before;
 	enum utf8n_qc q = utf8n_quick_check(f, x->b, x->n);
 	int same;
+
+	/* Did the fast path run?  A quick check of YES means every codepoint
+	 * is QC_YES and in order, which is exactly the condition under which
+	 * fast_prefix() reaches the end of the input, so the whole column must
+	 * have been copied verbatim and nothing decomposed.  Anything else
+	 * must have stopped short of the end.  Without this the fast path
+	 * could be disabled entirely and all 806,840 conformance assertions
+	 * and all 403,420 promises above would still pass. */
+	fast_checked++;
+	if (q == UTF8N_QC_YES ? copied != x->n : copied >= x->n) {
+		if (fast_bad++ < MAXSHOW)
+			printf("# FAIL line %ld: %s quick check %c but the "
+			       "fast path copied %lu of %zu bytes\n", lineno,
+			       fname[f], "YNM"[q], copied, x->n);
+	}
 
 	if (n == (size_t)-1 || n >= sizeof got - 1) {
 		qc_fail++;
@@ -289,10 +313,16 @@ int main(int argc, char **argv)
 		printf("# one of the three quick-check answers never occurred, "
 		       "so the promises above were not all tested\n");
 
+	printf("%s - the fast path ran exactly where the quick check says it "
+	       "can: %ld/%ld columns, %lu bytes copied verbatim over %lu "
+	       "calls\n", fast_bad ? "not ok" : "ok",
+	       fast_checked - fast_bad, fast_checked, utf8n_stat_fast_bytes,
+	       utf8n_stat_calls);
+
 	printf("\nconformance score: %ld/%ld assertions, %ld/%ld lines "
 	       "(NormalizationTest.txt, UCD %s)\n",
 	       total_pass, total_pass + total_fail, nlines - nbad, nlines,
 	       utf8n_ucd_version());
-	return total_fail || inv2_fail || qc_fail || !qc_seen[0] ||
+	return total_fail || inv2_fail || qc_fail || fast_bad || !qc_seen[0] ||
 	       !qc_seen[1] || !qc_seen[2] ? 1 : 0;
 }

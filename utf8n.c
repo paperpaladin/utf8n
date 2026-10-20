@@ -423,23 +423,103 @@ static size_t compose(uint32_t *p, size_t n)
 	return w;
 }
 
-/* shortcut: no quick-check fast path.  Already-normalised text, which is most
- * text, is decomposed and recomposed in full anyway.  Upgrade path: the
- * NFC_QC/NFD_QC properties from DerivedNormalizationProps.txt, emitted as a
- * fifth table, skipping any run of codepoints that are QC_Yes with combining
- * class 0.  Deliberately not done: it is a second code path that the
- * conformance file would mostly not exercise. */
+/* --- the fast path -------------------------------------------------------
+ *
+ * How many leading bytes of the input are already in the requested form AND
+ * cannot be changed by anything that follows them.  Those bytes are copied
+ * straight through, and only the rest is decomposed, reordered and recomposed.
+ *
+ * The condition for a byte offset k to be a safe split is three things.
+ * Everything before k is well-formed, QC_YES and in canonical order, so
+ * normalising it would return it unchanged -- that is exactly the promise
+ * utf8n_quick_check() makes and t/conform holds it to.  And the codepoint AT
+ * k is a starter, so no mark after k can reorder in front of anything before
+ * k, since canonical ordering never crosses a class-0 codepoint.  And the
+ * codepoint at k is QC_YES rather than QC_MAYBE, which is what keeps it from
+ * being the second half of a composition: Hangul V and T jamo are starters
+ * that compose with the starter in front of them, and so are twelve vowel
+ * signs in Tulu-Tigalari, Gurung Khema and Kirat Rai, and every one of them
+ * is QC_MAYBE.  Split in front of an L jamo and <L, V> composes; split in
+ * front of a V jamo and it does not, which is the whole reason the Maybe set
+ * has to be right.
+ *
+ * The codepoint at the split goes into the slow half, not the fast one: it is
+ * free to be the FIRST half of a composition with whatever follows.
+ *
+ * A scan that reaches the end of the input needs no split codepoint at all:
+ * the whole input is already in the form and nothing is left to compose with.
+ */
+#ifdef UTF8N_STATS
+/* Not in utf8n.h and not in a normal build: a fast path that is silently
+ * never taken returns the same answers as one that works, so t/conform reads
+ * these and asserts that an input it knows to be normalised was copied whole.
+ * They are the only mutable globals in the file and they exist for that one
+ * assertion. */
+unsigned long utf8n_stat_fast_bytes, utf8n_stat_calls;
+#define STAT(stmt) stmt
+#else
+#define STAT(stmt) ((void)0)
+#endif
+
+static size_t fast_prefix(enum utf8n_form form, const char *in, size_t inlen)
+{
+	size_t i = 0, split = 0;
+	int last_cc = 0;
+
+	while (i < inlen) {
+		unsigned char tmp[4];
+		uint32_t cp;
+		size_t r;
+		unsigned v;
+		int cc;
+
+		/* ASCII is its own encoding, has combining class 0 and is
+		 * QC_YES in all four forms: the quick-check table's first
+		 * range starts at U+00A0 and the combining-class table's at
+		 * U+0300.  Skipping the two binary searches below for it is
+		 * most of the speed of this path on real text, and t/unit
+		 * asserts all three facts for all 128 of them, because a
+		 * wrong assumption here would be invisible on exactly the
+		 * input that takes this branch. */
+		if ((unsigned char)in[i] < 0x80) {
+			split = i;
+			i++;
+			last_cc = 0;
+			continue;
+		}
+		r = utf8n_decode((const unsigned char *)in + i, inlen - i, &cp);
+
+		if (r != utf8n_encode(cp, tmp) || memcmp(tmp, in + i, r) != 0)
+			break;			/* ill-formed: the bytes change */
+		cc = utf8n_ccc(cp);
+		v = (qc_bits(cp) >> (2u * (unsigned)form)) & 3u;
+		if (v != UTF8N_QC_YES || (cc != 0 && last_cc > cc))
+			break;
+		if (cc == 0)
+			split = i;		/* a QC_YES starter: safe here */
+		i += r;
+		last_cc = cc;
+	}
+	return i == inlen ? inlen : split;
+}
+
 size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 		       char *out, size_t outcap)
 {
 	int compat = form == UTF8N_NFKD || form == UTF8N_NFKC;
 	struct cpbuf b = {NULL, 0, 0, 0};
-	size_t i = 0, need = 0, k;
+	size_t split = fast_prefix(form, in, inlen);
+	size_t i = split, need = split, k, w;
+
+	STAT(utf8n_stat_calls++);
+	STAT(utf8n_stat_fast_bytes += split);
 
 	/* The input is fully consumed here, before a single byte of out is
-	 * written below, which is what makes in == out legal.  Keep it that
-	 * way: fusing the encode into this loop to save the buffer would
-	 * silently break every in-place caller. */
+	 * written below, which is what makes in == out legal, and overlapping
+	 * in and out legal in general.  Keep it that way: fusing the encode
+	 * into this loop to save the buffer would silently break every
+	 * in-place caller, and so would copying the fast prefix before this
+	 * loop has finished reading the input. */
 	while (i < inlen) {
 		uint32_t cp;
 		i += utf8n_decode((const unsigned char *)in + i, inlen - i, &cp);
@@ -457,9 +537,22 @@ size_t utf8n_normalize(enum utf8n_form form, const char *in, size_t inlen,
 	 * neither is anything after it, since need only grows: what lands in
 	 * out is the longest whole-codepoint prefix that fits.  See the
 	 * contract in utf8n.h. */
+	/* The fast prefix, now that nothing reads in any more.  Truncation
+	 * follows the same rule as the loop below: never half a codepoint, so
+	 * if outcap lands inside a sequence, back up to its start. */
+	if (split <= outcap) {
+		w = split;
+	} else {
+		w = outcap;
+		while (w && ((unsigned char)in[w] & 0xC0) == 0x80)
+			w--;
+	}
+	if (w)
+		memmove(out, in, w);
+
 	for (k = 0; k < b.n; k++) {
 		unsigned char tmp[4];
-		size_t w = utf8n_encode(b.p[k], tmp);
+		w = utf8n_encode(b.p[k], tmp);
 		if (need + w <= outcap)
 			memcpy(out + need, tmp, w);
 		need += w;

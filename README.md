@@ -26,6 +26,8 @@ ok - @Part5: 38 lines, 1520/1520 assertions          (chained primary composites
 ok - requirement 2: 1094910/1094910 codepoints outside Part 1 are unchanged
 ok - quick check promises hold on every column: 403420/403420 column-form
      pairs, 221109 Yes 117585 No 64726 Maybe
+ok - the fast path ran exactly where the quick check says it can: 403420/403420
+     columns, 22872123 bytes copied verbatim over 5993320 calls
 ```
 
 Nothing fails.  20 of those assertions per line are the equalities the
@@ -43,7 +45,7 @@ That it passed on the first run is not evidence of anything, so see
 
 ```sh
 make                # utf8n.o, gcc and nothing else needed
-make test           # every oracle; prints the conformance score
+make test           # every oracle; prints the conformance score and MB/s
 make test-asan      # same, under -fsanitize=address,undefined
 make gen-tables     # regenerate utf8n_table.h from ucd/
 make clean
@@ -96,9 +98,71 @@ Over the conformance corpus the three answers come up 221,109 / 117,585 /
 Ill-formed input is `UTF8N_QC_NO`, even when every codepoint it decodes to is
 normalisation-stable: `utf8n_normalize` replaces the bad bytes with U+FFFD, so
 what comes back is not what went in, and YES has to keep meaning unchanged.
-`utf8n_normalize` does not yet use any of this internally -- the skip-ahead
-fast path is the next commit, and until then the quick check is a question a
-caller can ask cheaply, not a speed-up inside the library.
+`utf8n_normalize` uses the same table itself, which is the next section.
+
+## The fast path, and what it is actually worth
+
+`utf8n_normalize` starts by asking how many leading bytes are already in the
+requested form and cannot be changed by anything that follows.  Those bytes
+are copied straight through and only the rest is decomposed, reordered and
+recomposed.
+
+A byte offset k is a safe place to split when three things hold.  Everything
+before k is well-formed, `QC_YES` and in canonical order, which is exactly the
+promise `utf8n_quick_check` makes.  The codepoint AT k is a starter, so no mark
+after k can reorder in front of anything before k, because canonical ordering
+never crosses a class-0 codepoint.  And the codepoint at k is `QC_YES` rather
+than `QC_MAYBE`, which is what stops it being the second half of a
+composition: Hangul V and T jamo are starters that compose with the starter in
+front of them, and so are twelve vowel signs in Tulu-Tigalari, Gurung Khema
+and Kirat Rai.  Split in front of an L jamo and `<L, V>` quietly stops
+composing; split in front of a V jamo and nothing is lost.  That is why the
+Maybe set has to be exactly right and not approximately right.  The codepoint
+at the split goes into the slow half, since it is free to be the FIRST half of
+a composition with whatever comes next.
+
+Bytes below 0x80 skip both binary searches: ASCII is its own encoding, has
+combining class 0, and is `QC_YES` in all four forms.  That branch is where
+nearly all of the speed comes from, so `t/unit` asserts all three facts for
+all 128 of them against the generated table, which `t/diff.py` in turn checks
+against the UCD.
+
+Measured by `t/nfx -t`, which `make test` runs on two corpora every time so
+the numbers below cannot go stale quietly.  CPU time via `clock()`, one
+machine, repeated until 0.2s per form; runs vary by about 5%.
+
+| corpus | NFD | NFC | NFKD | NFKC |
+| --- | --- | --- | --- | --- |
+| 2.2MB of ASCII (`UnicodeData.txt`), no fast path | 38.9 | 19.6 | 38.7 | 19.6 |
+| the same, with it | **1611** | **1594** | **1562** | **1642** |
+| the same plus one U+00E9 at byte 100, no fast path | 38.6 | 19.3 | 39.9 | 18.3 |
+| the same, with it | 39.0 | **1570** | 38.0 | **1575** |
+| 100kB of mark-dense NFC text, no fast path | 46.3 | 26.7 | 47.9 | 26.2 |
+| the same, with it | 47.3 | 27.5 | 47.9 | 26.8 |
+| 400kB of urandom, no fast path | 23.2 | 13.0 | 23.4 | 12.9 |
+| the same, with it | 23.0 | 12.9 | 21.7 | 12.9 |
+
+MB/s.  "No fast path" is `fast_prefix()` edited to return 0, which is also
+mutant F1 below.
+
+Three things in that table are worth saying out loud.  ASCII text already in
+the form goes 40 to 80 times faster.  Nothing gets slower, including 400kB of
+random bytes, where the scan stops at the first ill-formed byte and the whole
+exercise costs a handful of comparisons.  And the mark-dense corpus gains
+nothing at all: it is the NFC column of `NormalizationTest.txt` as actual
+text, 76% non-ASCII, and the scan stops after 8 bytes, because a combining
+mark is `QC_MAYBE` for the composing forms and most codepoints in it are
+`NFD_QC=No` for the decomposing ones.
+
+The second pair of rows is the honest limit.  One precomposed U+00E9 a hundred
+bytes into a 2.2MB file leaves NFD at 39.0 MB/s, the no-fast-path speed, for
+the remaining 2.2MB: the scan stops at the first codepoint that is not
+`QC_YES` and never resumes.  NFC is unaffected by that same character, because
+the file is already NFC.  Resuming after each slow segment is the next item in
+`PLAN.md`, and it is not a one-line change: the contract allows `in` and `out`
+to overlap arbitrarily, which is why nothing is written until the whole input
+has been read, and a loop that alternates copying and composing has to keep
+that property.
 
 ## Invalid UTF-8: the policy, stated and held to
 
@@ -308,6 +372,44 @@ The lesson is the one about granularity.  A property asserted over a single
 large input can be true for a reason that has nothing to do with the code
 under test, and the fix is not more input but shorter input.
 
+### The fast path, and the two things that only a counter can see
+
+A fast path is the shape METHOD warns about: when it is never taken, every
+answer is still right.  So `utf8n.c` has two counters under `-DUTF8N_STATS`
+and `t/conform` asserts, for all 403,420 column-form pairs, that the fast path
+copied the whole column exactly when the quick check says YES and stopped
+short of the end otherwise.  That assertion earned itself immediately: with
+`fast_prefix()` edited to return 0, all 806,840 conformance assertions, all
+403,420 quick-check promises and the whole CPython differential still pass,
+and the counter is the only thing in the suite that goes red.
+
+Eight mutants:
+
+| injected defect | caught by |
+| --- | --- |
+| `fast_prefix()` returns 0, the path is never taken | the counter in `t/conform`, and nothing else: 182,311 of 403,420 columns |
+| split allowed anywhere, not only at a starter | `NormalizationTest.txt` (ordering breaks: `05B8 05B9 05B1 ...`) and three `t/unit` ordering cases |
+| `QC_MAYBE` accepted as safe at the split | nine `t/unit` composition cases and the conformance file: `<L, V>` stops composing |
+| the fast path ignores whether the bytes were well-formed | the hostile-input oracle, which reports the output is not well-formed UTF-8 in all four forms, plus 192,995 broken promises over the random windows |
+| the ASCII branch takes continuation bytes too, `< 0xC0` | `t/unit`'s ill-formed cases and 26,938 of the random windows |
+| the ASCII branch forgets to reset the combining class | one `t/unit` case, counting bytes: 2 of 5 copied instead of 5 |
+| truncation back-up deleted, so the prefix can be cut mid-codepoint | `t/unit`'s truncation cases |
+| the prefix copied BEFORE the input is read | `t/unit`'s overlapping-buffer case, with `out` two bytes after `in` |
+
+The last three were survivors first, and all three for the same reason: the
+properties they break were only ever checked on input where the fast path does
+nothing.  Truncation and well-formedness were checked against 400kB of random
+bytes, which is ill-formed, so the fast prefix there is always empty; in-place
+use was checked with `in == out`, where copying early writes the same bytes
+back to the same place and nothing notices.  The three new cases are
+already-normalised multi-byte strings, every `outcap` from 0 to the output
+length, and `out` at a different offset from `in` in both directions.
+
+Only the shifted-forward direction catches the early-copy mutant, and the
+reason is worth keeping: with `out` before `in`, the prefix write lands
+entirely in bytes the decode loop has already passed, so it cannot corrupt
+anything.  The case where `out` is after `in` is the one that can.
+
 ## Every oracle's exit status is now checked
 
 Each oracle used to run as `./t/conform ... 2>&1 | tee -a "$OUT"`, which
@@ -353,13 +455,14 @@ Stated plainly, because a README that only lists successes is not finished.
   so a streaming version is a real design, not a flag.
 - `realloc` failure is reported, and the program stops there.  `(size_t)-1` and nothing
   written.  No fixed-buffer mode, no caller-supplied allocator.
-- `utf8n_normalize` has no quick-check fast path yet.  The tables and
-  `utf8n_quick_check` exist and are checked against the UCD for every
-  codepoint, but nothing inside the library consults them: already-NFC text is
-  still fully decomposed, reordered and recomposed.  A caller who wants the
-  saving today has to ask `utf8n_quick_check` first and skip the call itself.
-  The skip-ahead path inside `utf8n_normalize` is the next commit in `PLAN.md`
-  and is where the measured numbers will go.
+- The fast path is one prefix, not a loop.  It stops at the first codepoint
+  that is not `QC_YES` and does not resume, so a single precomposed character
+  early in a large file costs the whole saving for everything after it: 39.0
+  MB/s instead of 1611 for NFD over 2.2MB, measured above.  Mark-dense text
+  gains nothing even when it is entirely normalised, because combining marks
+  are `QC_MAYBE` for NFC and NFKC.  Both are the same missing feature, a loop
+  that alternates fast and slow segments, and it has to be written around the
+  overlapping-buffer contract rather than over it.
 - O(n^2) canonical ordering within a run of combining marks.  Fine for the
   runs that occur in text (the longest in the UCD's own test data is 4) and
   tested up to 2000 marks, but a crafted input of a million marks on one base
@@ -370,7 +473,11 @@ Stated plainly, because a README that only lists successes is not finished.
   two-stage table and about 100 lines shorter.
 - Not thread-hostile but not thread-aware either.  No global state, so
   concurrent calls are fine. There is no locking because there is nothing to
-  lock.
+  lock.  The exception is deliberate and is not in a normal build:
+  `-DUTF8N_STATS` adds two unsynchronised counters that exist so the test
+  suite can tell whether the fast path ran, since a fast path that is never
+  taken returns identical answers.  `make` does not define it; `t/run.sh`
+  defines it for `t/unit` and `t/conform` only.
 - Only the four normalisation forms.  No `NFKC_Casefold`, no case folding,
   no collation, no grapheme cluster segmentation, no bidi.  `wcwidth`-style
   display width lives in the sibling `vtparse` repo and is deliberately not
@@ -395,7 +502,7 @@ Stated plainly, because a README that only lists successes is not finished.
 ## Files
 
 ```
-utf8n.c            469 lines   the implementation
+utf8n.c            562 lines   the implementation
 utf8n.h             79 lines   the contract, including the ill-formed policy
 utf8n_table.h      281 KB      GENERATED -- do not edit
 tools/gen_tables.py           reads the UCD, derives and checks the exclusions
@@ -405,6 +512,7 @@ t/conform.c                   NormalizationTest.txt
 t/unit.c                      assertions that need no downloaded data
 t/diff.py                     CPython differential with skew attribution
 t/nfx.c                       the filter diff.py drives, plus -r for raw bytes
+                              and -t for throughput
 ```
 
 Deliberate shortcuts are marked `shortcut:` in the source with the ceiling they

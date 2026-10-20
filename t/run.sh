@@ -62,8 +62,8 @@ else
 fi
 
 printf '=== building (CC=%s)\n' "$CC"
-build ./t/unit t/unit.c utf8n.c || exit 1
-build ./t/conform t/conform.c utf8n.c || exit 1
+build ./t/unit -DUTF8N_STATS t/unit.c utf8n.c || exit 1
+build ./t/conform -DUTF8N_STATS t/conform.c utf8n.c || exit 1
 build ./t/nfx t/nfx.c utf8n.c || exit 1
 
 # Every oracle below runs through this, because the score is counted by
@@ -158,6 +158,35 @@ printf '\n--- hostile input: 400kB of /dev/urandom through all four forms\n'
 head -c 400000 /dev/urandom > scratch/urandom.bin
 runq "nfx -r urandom" sh -c './t/nfx -r < scratch/urandom.bin 2>&1'
 runq "nfx -r empty" sh -c 'printf "" | ./t/nfx -r 2>&1'
+
+# What the fast path is worth, measured every run rather than written down
+# once.  Comment lines, never "ok": a timing is not a pass or a fail, and a
+# suite that goes red because a machine was busy teaches nobody anything.
+#
+# Two corpora, because one number here would be a lie in both directions.
+# UnicodeData.txt is 2.2MB of ASCII already in all four forms, which is the
+# case the fast path is for; the other is the NFC column of
+# NormalizationTest.txt as actual text, 76% non-ASCII and dense with combining
+# marks, where the scan stops almost immediately and the fast path is worth
+# nothing at all.
+printf '\n--- throughput (comments, not assertions)\n'
+if [ "$HAVE_UCD" = 1 ]; then
+	printf '# 2.2MB of ASCII (ucd/UnicodeData.txt), already in all four forms\n' \
+		| tee -a "$OUT"
+	./t/nfx -t < ucd/UnicodeData.txt | tee -a "$OUT"
+	python3 -c 'import sys
+out = []
+for line in open("ucd/NormalizationTest.txt", encoding="utf-8"):
+    if line[0] in "#@":
+        continue
+    col = line.split(";")
+    if len(col) >= 5:
+        out.append("".join(chr(int(x, 16)) for x in col[1].split()))
+sys.stdout.write(" ".join(out))' > scratch/mixed.txt
+	printf '# 100kB of mark-dense NFC text (the NFC column of NormalizationTest.txt)\n' \
+		| tee -a "$OUT"
+	./t/nfx -t < scratch/mixed.txt | tee -a "$OUT"
+fi
 
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")

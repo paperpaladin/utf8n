@@ -9,6 +9,11 @@
 #include <stdarg.h>
 #include "../utf8n.h"
 
+/* t/run.sh compiles this with -DUTF8N_STATS, which is what makes the counter
+ * exist in utf8n.c.  A build without it fails to link rather than quietly
+ * dropping the one assertion that can see how far the fast path got. */
+extern unsigned long utf8n_stat_fast_bytes;
+
 static int failures;
 static const char *fname[] = {"NFD", "NFC", "NFKD", "NFKC"};
 
@@ -433,6 +438,27 @@ static void t_decompose(void)
 		   "NFC in place, shrinking (%zu bytes)", n);
 	}
 
+	/* Overlapping at a different offset, which in == out does not cover.
+	 * The input must be fully read before any byte is written, and the
+	 * fast path makes that easy to get wrong: copying its prefix to out
+	 * before the decode loop finishes would overwrite input the loop has
+	 * not reached yet.  "abc" is the fast prefix here and "e" + U+0301 is
+	 * the part that has to be composed, so both halves are in play. */
+	{
+		char buf[64];
+		size_t n;
+
+		memcpy(buf, "Xabce\xCC\x81", 7);	/* in = buf + 1 */
+		n = utf8n_normalize(UTF8N_NFC, buf + 1, 6, buf, sizeof buf);
+		ok(n == 5 && memcmp(buf, "abc\xC3\xA9", 5) == 0,
+		   "NFC with out two bytes before in (%zu bytes)", n);
+
+		memcpy(buf, "abce\xCC\x81", 6);		/* out = buf + 2 */
+		n = utf8n_normalize(UTF8N_NFC, buf, 6, buf + 2, sizeof buf - 2);
+		ok(n == 5 && memcmp(buf + 2, "abc\xC3\xA9", 5) == 0,
+		   "NFC with out two bytes after in (%zu bytes)", n);
+	}
+
 	/* An embedded NUL is data, not a terminator: the API takes a length. */
 	ok(utf8n_normalize(UTF8N_NFD, "\xC3\xA9\0\xC3\xA9", 5, NULL, 0) == 7,
 	   "an embedded NUL is normalised through, not stopped at");
@@ -526,6 +552,156 @@ static void t_quickcheck(void)
 	   seen[2]);
 	ok(promises == 0 && seen[0] && seen[1] && seen[2],
 	   "quick check kept its YES and NO promises on all of them");
+
+	/* The fast path inside utf8n_normalize() skips both binary searches
+	 * for every byte below 0x80, on the grounds that ASCII is its own
+	 * encoding, has combining class 0, and is QC_YES in all four forms.
+	 * The first is arithmetic; the other two are claims about the
+	 * generated table, so they are checked here against the table, which
+	 * t/diff.py in turn checks against the UCD for every codepoint.  A
+	 * wrong assumption would be invisible on ASCII input, which is the
+	 * input that takes the branch. */
+	{
+		int asciibad = 0;
+		unsigned c;
+
+		for (c = 0; c < 0x80; c++) {
+			char b = (char)c;
+
+			if (utf8n_ccc(c) != 0)
+				asciibad++;
+			for (f = 0; f < 4; f++)
+				if (utf8n_quick_check(order[f], &b, 1)
+				    != UTF8N_QC_YES)
+					asciibad++;
+		}
+		ok(asciibad == 0, "all 128 ASCII codepoints have combining "
+		   "class 0 and are QC_YES in all four forms, which is what "
+		   "the fast path assumes");
+	}
+
+	/* How far the fast path got, which no value comparison can see.
+	 *
+	 * U+0301 'a' U+0316 is a leading mark, a starter, and a mark of lower
+	 * class than the first.  It is in canonical order, because the starter
+	 * between them ends the first run and resets the class, so NFD and
+	 * NFKD answer YES and must copy the whole string verbatim.  An
+	 * implementation that carried the class across the starter stops at
+	 * the 'a' instead: safe, and slower, and invisible to every value
+	 * comparison in this repository, because NormalizationTest.txt has no
+	 * column of this shape.
+	 *
+	 * NFC and NFKC answer MAYBE here and are expected to copy nothing: the
+	 * acute is a composition second, so the quick check cannot know
+	 * whether the mark in front of it will be pulled into a composite. */
+	{
+		static const char yes[] = "\xCC\x81" "a" "\xCC\x96";
+		size_t n = sizeof yes - 1;
+		char out[32];
+		int shortfall = 0, yeses = 0;
+
+		for (f = 0; f < 4; f++) {
+			unsigned long before = utf8n_stat_fast_bytes;
+			size_t got = utf8n_normalize(order[f], yes, n, out,
+						     sizeof out);
+			unsigned long copied = utf8n_stat_fast_bytes - before;
+
+			if (utf8n_quick_check(order[f], yes, n)
+			    != UTF8N_QC_YES)
+				continue;
+			yeses++;
+			if (got != n || memcmp(out, yes, n) != 0 ||
+			    copied != n) {
+				printf("# %s of a mark, a starter and a lower "
+				       "mark: %lu of %zu bytes copied by the "
+				       "fast path\n", fname[f], copied, n);
+				shortfall++;
+			}
+		}
+		ok(shortfall == 0 && yeses == 2, "an ASCII starter resets the "
+		   "combining class, so the fast path copies past it (%d of "
+		   "the four forms call it normalised)", yeses);
+	}
+}
+
+/* The truncation contract, on input where the fast path is live.
+ *
+ * utf8n_normalize() writes the longest whole-codepoint prefix of the result
+ * that fits in outcap and leaves the rest of the buffer untouched.  t/nfx -r
+ * checks that over 400kB of random bytes, where it is the slow path doing the
+ * writing: random bytes are ill-formed, so the fast prefix is always empty
+ * there.  Deleting the fast path's own "do not cut a codepoint in half" loop
+ * therefore passed the whole suite, which is what these cases are for.
+ *
+ * Every outcap from 0 to inlen + 1 is tried on each string, and the strings
+ * are chosen so that the fast prefix is the whole input, part of it, and a
+ * four-byte sequence that needs the back-up to walk three bytes. */
+static void t_truncate(void)
+{
+	static const struct { const char *name, *in, *want; } cases[] = {
+		/* Already NFC: the fast path copies all of it. */
+		{"three 2-byte, all fast", "\xC3\xA9\xC3\xA9\xC3\xA9",
+		 "\xC3\xA9\xC3\xA9\xC3\xA9"},
+		/* 4-byte sequences: backing up has three bytes to walk. */
+		{"two 4-byte, all fast", "\xF0\x9F\x92\xA9\xF0\x9F\x92\xA9",
+		 "\xF0\x9F\x92\xA9\xF0\x9F\x92\xA9"},
+		/* U+00E9 then e + U+0301: the first codepoint is copied and the
+		 * rest is composed, so outcap lands either side of the seam. */
+		{"half fast, half composed", "\xC3\xA9" "e\xCC\x81",
+		 "\xC3\xA9\xC3\xA9"},
+		/* Nothing is QC_YES here, so the fast prefix is empty. */
+		{"nothing fast", "e\xCC\x81" "e\xCC\x81", "\xC3\xA9\xC3\xA9"},
+	};
+	size_t i;
+	int bad = 0;
+
+	for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+		size_t inlen = strlen(cases[i].in);
+		size_t wantlen = strlen(cases[i].want), cap;
+
+		for (cap = 0; cap <= wantlen + 1; cap++) {
+			char out[32];
+			size_t need, pre = 0, j;
+
+			memset(out, 0x7F, sizeof out);
+			need = utf8n_normalize(UTF8N_NFC, cases[i].in, inlen,
+					       out, cap);
+			/* The expected prefix: whole codepoints of want that
+			 * fit in cap. */
+			for (j = 0; j < wantlen && j < cap;) {
+				unsigned char c = (unsigned char)cases[i].want[j];
+				size_t r = c < 0x80 ? 1 : c < 0xE0 ? 2
+					   : c < 0xF0 ? 3 : 4;
+				if (j + r > cap)
+					break;
+				j += r;
+				pre = j;
+			}
+			if (need != wantlen) {
+				printf("# %s cap %zu: need %zu, want %zu\n",
+				       cases[i].name, cap, need, wantlen);
+				bad++;
+				continue;
+			}
+			if (memcmp(out, cases[i].want, pre) != 0) {
+				printf("# %s cap %zu: wrong %zu-byte prefix\n",
+				       cases[i].name, cap, pre);
+				bad++;
+				continue;
+			}
+			for (j = pre; j < sizeof out; j++)
+				if ((unsigned char)out[j] != 0x7F) {
+					printf("# %s cap %zu: wrote byte %zu, "
+					       "past its %zu-byte whole-"
+					       "codepoint prefix\n",
+					       cases[i].name, cap, j, pre);
+					bad++;
+					break;
+				}
+		}
+	}
+	ok(bad == 0, "truncation writes whole codepoints only, over every "
+	   "outcap of %zu strings", sizeof cases / sizeof cases[0]);
 }
 
 int main(void)
@@ -537,5 +713,6 @@ int main(void)
 	t_hangul();
 	t_compose();
 	t_quickcheck();
+	t_truncate();
 	return failures != 0;
 }
