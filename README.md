@@ -55,8 +55,12 @@ make clean
 not committed, so `t/run.sh` fetches the four it needs into `ucd/` (pinned to
 18.0.0, read out of the committed header: not `latest`, so a new Unicode
 release cannot silently change the answers under the test suite).  Without the
-network the two external oracles are skipped, the run says so in a roster at
-the end, and `UTF8N_REQUIRE_ORACLES=1` turns that skip into a failure.
+network, and with nothing cached, every UCD-backed oracle is skipped, the run
+says so in a roster at the end, and `UTF8N_REQUIRE_ORACLES=1` turns that skip
+into a failure.  A skip is a skip and never a failure: a run with `ucd/`
+missing and CPython's `ucd-15.1.0/` still cached used to print "100 passed, 1
+failed", because `t/diff.py` ran and died on its first `open()`.  It is
+skipped with the rest now.
 
 ## API
 
@@ -213,8 +217,11 @@ Ranked by how little of each one we control.
    demonstrates: a generator that packs Maybe as No passes the byte-for-byte
    header diff, because the header and the generator agree with each other,
    and fails the sweep.
-4. CPython `unicodedata.normalize` and `unicodedata.is_normalized`.  Works
-   offline, so it is the oracle that always runs.  All four forms over: every BMP codepoint (63,488), every
+4. CPython `unicodedata.normalize` and `unicodedata.is_normalized`.  Needs no
+   network once the UCD files are on disk, so it is the oracle that survives a
+   broken connection; it does need both UCD directories, ours and CPython's
+   own version, because a disagreement has to be attributed to a property
+   change or reported.  All four forms over: every BMP codepoint (63,488), every
    astral codepoint with a decomposition or a combining class plus every 97th
    of the rest (13,132), 5580 starter-mark-mark sequences, all 11,172 Hangul
    jamo sequences, runs of 33 to 2000 combining marks, and strings that start

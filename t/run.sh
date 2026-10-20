@@ -104,10 +104,20 @@ if [ "$HAVE_UCD" = 1 ]; then
 	conf_state=$(grep '^conformance score' "$OUT" | tail -1)
 fi
 
-# Oracle 3 and 4: CPython.  Works with no network, which is why it is the
-# oracle that always runs.  It needs the UCD of CPython's own Unicode version
-# as well as ours, to tell version skew from a real disagreement.
-if [ "$PY_VER" != none ] && fetch "$PY_VER" "ucd-$PY_VER" UnicodeData.txt \
+# Oracle 3 and 4: CPython.  No network needed once the files are on disk,
+# which is why it is the oracle that survives a broken connection.  It does
+# need both UCD directories: CPython's own version to tell version skew from a
+# real disagreement, and ours for the quick-check sweep and for the properties
+# a disagreement is attributed against.
+#
+# That HAVE_UCD test is not redundant.  Without it, a run with ucd/ missing and
+# ucd-15.1.0/ already cached ran t/diff.py anyway, which died on the first
+# open() of ucd/UnicodeData.txt: "100 passed, 1 failed" with a roster that said
+# three oracles were SKIPPED and one had run.  A missing oracle has to read as
+# a skip, never as a failure, or the one number that matters stops meaning
+# anything.
+if [ "$HAVE_UCD" = 1 ] && [ "$PY_VER" != none ] &&
+	fetch "$PY_VER" "ucd-$PY_VER" UnicodeData.txt \
 	DerivedNormalizationProps.txt; then
 	printf '\n--- oracle 3+4: CPython unicodedata and its UTF-8 decoder\n'
 	runq "t/diff.py" python3 t/diff.py ./t/nfx ucd "ucd-$PY_VER"
@@ -195,6 +205,9 @@ esac
 # marks, where the scan stops almost immediately and the fast path is worth
 # nothing at all.
 printf '\n--- throughput (comments, not assertions)\n'
+if [ "$HAVE_UCD" != 1 ]; then
+	printf '# no UCD files, so no corpus to time\n' | tee -a "$OUT"
+fi
 if [ "$HAVE_UCD" = 1 ]; then
 	printf '# 2.2MB of ASCII (ucd/UnicodeData.txt), already in all four forms\n' \
 		| tee -a "$OUT"
