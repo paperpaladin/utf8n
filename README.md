@@ -192,6 +192,43 @@ truncation check asserted snprintf semantics that `utf8n_normalize` does not
 implement and should not, which is how the whole-codepoint-prefix contract came
 to be written down.
 
+### Mutating the generated table, and the generator that writes it
+
+A generated, committed table has a failure mode of its own: the generator and
+the header drifting apart, so that `tools/gen_tables.py` describes one Unicode
+version and `utf8n_table.h` encodes something else.  Three mutants, aimed at
+that seam rather than at the algorithms:
+
+| injected defect | caught by |
+| --- | --- |
+| one composite in `utf8n_table.h` edited by hand (`A`+`U+0300` -> `U+00C1`) | conformance (806830/806840, 20170/20171 lines), CPython diff (2 unexplained), and the table diff: 104 passed / 5 failed |
+| generator field width changed, `%5d` -> `%6d`, header left alone | the table diff ALONE: 106 passed / 1 failed |
+| the non-starter clause dropped from `check_exclusions()` | the generator refusing: `only ours [], only UCD [3955, 3957, 3969]`, which is U+0F73, U+0F75 and U+0F81 |
+
+The middle row is the one that justifies the check.  A generator whose output
+formatting has moved produces a table that is byte-for-byte different and
+semantically identical, so every value oracle in the repository agrees with it
+and only the regeneration diff notices.  Without that diff the generator would
+have become decoration, and the next person to re-run it would get a diff of
+thousands of lines with no way to tell drift from a Unicode update.
+
+Writing those three found two defects in the reporting, both of the
+"passes while saying nothing" kind:
+
+- The oracle roster printed `2 Full_Composition_Exclusion via
+  tools/gen_tables.py  ran, table diffed byte for byte` **whether or not the
+  diff agreed**.  The roster exists to stop a skipped oracle looking like a
+  passing one, and on this line it made a failing oracle look like a passing
+  one.  It reports the outcome now: `header matches the generator byte for
+  byte`, `HEADER DOES NOT MATCH the generator`, or `REFUSED`.
+- A refusal and a wrong answer shared one `not ok` line.  The generator
+  exiting non-zero because its derived `Full_Composition_Exclusion` set
+  disagrees with the UCD's is a refusal: no table was written and no
+  comparison was made.  A header that differs from the regenerated one is a
+  wrong answer already sitting in the repository.  They are separate lines
+  now, and the generator's own output, including the mismatch message, is
+  logged with a `# ` prefix so it cannot be counted as a result.
+
 ## Every oracle's exit status is now checked
 
 Each oracle used to run as `./t/conform ... 2>&1 | tee -a "$OUT"`, which

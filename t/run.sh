@@ -50,6 +50,7 @@ fetch() { # fetch <version> <dir> <file>...
 
 conf_state='SKIPPED -- UCD not fetched'
 diff_state='SKIPPED -- UCD not fetched'
+gen_state='SKIPPED -- UCD not fetched'
 
 printf '=== UCD %s (ours) vs %s (CPython)\n' "$UCD_VER" "$PY_VER"
 if fetch "$UCD_VER" ucd UnicodeData.txt CompositionExclusions.txt \
@@ -115,13 +116,28 @@ fi
 # The committed header must be exactly what the generator produces from this
 # UCD version: proof that the tables are reproducible rather than hand-edited,
 # and it is the generator that runs the Full_Composition_Exclusion self-oracle.
+#
+# Two different failures live here and they used to share one "not ok" line.
+# The generator REFUSING (its derived Full_Composition_Exclusion set does not
+# equal the UCD's, so it exits non-zero without writing a table) is a refusal:
+# the oracle disagreed and we declined to answer.  A table that differs from
+# the regenerated one is a wrong answer sitting in the repository.  Merging
+# them hid which of the two had happened, and the second is the one that ships.
 if [ "$HAVE_UCD" = 1 ]; then
 	printf '\n--- generated tables are reproducible from UCD %s\n' "$UCD_VER"
-	if python3 tools/gen_tables.py ucd scratch/utf8n_table.h &&
-		cmp -s scratch/utf8n_table.h utf8n_table.h; then
-		say "ok - utf8n_table.h regenerates byte for byte from the UCD"
+	if gen_out=$(python3 tools/gen_tables.py ucd scratch/utf8n_table.h 2>&1); then
+		printf '%s\n' "$gen_out" | sed 's/^/# /' | tee -a "$OUT"
+		if cmp -s scratch/utf8n_table.h utf8n_table.h; then
+			say "ok - utf8n_table.h regenerates byte for byte from the UCD"
+			gen_state='ran, header matches the generator byte for byte'
+		else
+			say "not ok - utf8n_table.h DIFFERS from what tools/gen_tables.py produces (stale header, or hand-edited)"
+			gen_state='ran, HEADER DOES NOT MATCH the generator'
+		fi
 	else
-		say "not ok - utf8n_table.h regenerates byte for byte from the UCD"
+		printf '%s\n' "$gen_out" | sed 's/^/# /' | tee -a "$OUT"
+		say "not ok - tools/gen_tables.py REFUSED to emit tables; no byte-for-byte comparison was made"
+		gen_state='REFUSED -- the generator self-oracle disagreed with the UCD'
 	fi
 fi
 
@@ -141,14 +157,12 @@ fail=$(grep -c '^not ok - ' "$OUT")
 # need the network, so print what actually ran, every time, next to the score.
 printf '\n=== oracles\n'
 printf '  1 NormalizationTest.txt   %s\n' "$conf_state"
-printf '  2 Full_Composition_Exclusion via tools/gen_tables.py  %s\n' \
-	"$([ "$HAVE_UCD" = 1 ] && echo "ran, table diffed byte for byte" \
-		|| echo "SKIPPED -- UCD not fetched")"
+printf '  2 Full_Composition_Exclusion via tools/gen_tables.py  %s\n' "$gen_state"
 printf '  3 CPython unicodedata     %s\n' "$diff_state"
 printf '  4 unit assertions and hostile input   ran (no data needed)\n'
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-case "$conf_state$diff_state" in
+case "$conf_state$diff_state$gen_state" in
 *SKIPPED*)
 	printf 'WARNING: an external oracle did not run, so this score proves\n'
 	printf 'much less than a full run does.  Set UTF8N_REQUIRE_ORACLES=1 to\n'
