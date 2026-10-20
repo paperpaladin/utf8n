@@ -8,3 +8,5 @@ scratch/
 t/unit
 t/conform
 t/nfx
+# python bytecode from running tools/ or t/ scripts
+__pycache__/

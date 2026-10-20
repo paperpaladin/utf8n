@@ -24,6 +24,8 @@ ok - @Part3: 194 lines, 7760/7760 assertions         (PRI #29 test)
 ok - @Part4: 735 lines, 29400/29400 assertions       (canonical closures)
 ok - @Part5: 38 lines, 1520/1520 assertions          (chained primary composites)
 ok - requirement 2: 1094910/1094910 codepoints outside Part 1 are unchanged
+ok - quick check promises hold on every column: 403420/403420 column-form
+     pairs, 221109 Yes 117585 No 64726 Maybe
 ```
 
 Nothing fails.  20 of those assertions per line are the equalities the
@@ -41,7 +43,7 @@ That it passed on the first run is not evidence of anything, so see
 
 ```sh
 make                # utf8n.o, gcc and nothing else needed
-make test           # all four oracles; prints the conformance score
+make test           # every oracle; prints the conformance score
 make test-asan      # same, under -fsanitize=address,undefined
 make gen-tables     # regenerate utf8n_table.h from ucd/
 make clean
@@ -66,6 +68,10 @@ size_t utf8n_encode(uint32_t cp, unsigned char *out);
 int utf8n_ccc(uint32_t cp);
 int utf8n_max_expansion(void);        /* 18, set by U+FDFA under NFKD */
 const char *utf8n_ucd_version(void);  /* "18.0.0" */
+
+enum utf8n_qc { UTF8N_QC_YES, UTF8N_QC_NO, UTF8N_QC_MAYBE };
+enum utf8n_qc utf8n_quick_check(enum utf8n_form form, const char *in,
+                                size_t inlen);
 ```
 
 `utf8n_normalize` returns the number of bytes the result needs and writes at
@@ -75,6 +81,24 @@ truncation it writes the longest *whole-codepoint* prefix that fits and leaves
 the rest of the buffer untouched, instead of cutting a UTF-8 sequence in half.
 `in` and `out` may be the same buffer.  The only failure return is `(size_t)-1`
 for a failed `realloc`.
+
+`utf8n_quick_check` answers "is this text already in that form" without
+normalising it: one table lookup per codepoint, no allocation, and it stops at
+the first codepoint that settles the question.  This is UAX #15's quick check
+and it has three answers, not two.  `UTF8N_QC_YES` is a guarantee that
+`utf8n_normalize` would return the input byte for byte; `UTF8N_QC_NO` is
+equally definite the other way; `UTF8N_QC_MAYBE` means the cheap test cannot
+tell, because the text contains a codepoint that something in front of it
+might compose with, and the only way to find out is to normalise and compare.
+Over the conformance corpus the three answers come up 221,109 / 117,585 /
+64,726 times, so MAYBE is not a rare corner.
+
+Ill-formed input is `UTF8N_QC_NO`, even when every codepoint it decodes to is
+normalisation-stable: `utf8n_normalize` replaces the bad bytes with U+FFFD, so
+what comes back is not what went in, and YES has to keep meaning unchanged.
+`utf8n_normalize` does not yet use any of this internally -- the skip-ahead
+fast path is the next commit, and until then the quick check is a question a
+caller can ask cheaply, not a speed-up inside the library.
 
 ## Invalid UTF-8: the policy, stated and held to
 
@@ -113,13 +137,29 @@ Ranked by how little of each one we control.
    on the exclusion rules, and `make test` additionally regenerates the
    committed header and diffs it byte for byte, so the tables cannot have been
    hand-edited.
-3. CPython `unicodedata.normalize`.  Works offline, so it is the oracle
-   that always runs.  All four forms over: every BMP codepoint (63,488), every
+3. `DerivedNormalizationProps.txt`, properties `NFD_QC`, `NFC_QC`, `NFKD_QC`
+   and `NFKC_QC`.  Derived twice and checked twice.  `tools/gen_tables.py`
+   derives all four by normalising every codepoint with its own small Python
+   implementation and refuses to emit tables unless its No and Maybe sets
+   equal the UCD's published ones exactly; then `t/diff.py` asks the C
+   `utf8n_quick_check` for every codepoint and compares that against the same
+   published property, with a second, independent parser for those lines.
+   1,112,064 codepoints times four forms: 4,411,432 Yes, 36,560 No, 264 Maybe,
+   0 wrong.  The two checks catch different things, which a mutation
+   demonstrates: a generator that packs Maybe as No passes the byte-for-byte
+   header diff, because the header and the generator agree with each other,
+   and fails the sweep.
+4. CPython `unicodedata.normalize` and `unicodedata.is_normalized`.  Works
+   offline, so it is the oracle that always runs.  All four forms over: every BMP codepoint (63,488), every
    astral codepoint with a decomposition or a combining class plus every 97th
    of the rest (13,132), 5580 starter-mark-mark sequences, all 11,172 Hangul
    jamo sequences, runs of 33 to 2000 combining marks, and strings that start
-   with a combining mark.
-4. CPython's UTF-8 decoder, as above.
+   with a combining mark.  `is_normalized` is the external check on
+   `utf8n_quick_check` over multi-codepoint strings, which is where its
+   canonical-ordering branch lives: deleting that branch is invisible to the
+   per-codepoint sweep above and shows up here as 0061 0301 0316 answering YES
+   where CPython says it is not normalised.
+5. CPython's UTF-8 decoder, as above.
 
 ### Version skew, and not hiding behind it
 
@@ -229,6 +269,45 @@ Writing those three found two defects in the reporting, both of the
   now, and the generator's own output, including the mismatch message, is
   logged with a `# ` prefix so it cannot be counted as a result.
 
+### The quick check, and a survivor that was a harness gap
+
+Ten more mutants, for the quick-check tables and `utf8n_quick_check`:
+
+| injected defect | caught by |
+| --- | --- |
+| the canonical-ordering branch deleted | `t/conform`, 5164 of 403,420 promises broken, and CPython's `is_normalized`; NOT the per-codepoint sweep, which only ever sees one codepoint at a time |
+| MAYBE reported as YES | the sweep (132 wrong) and `t/conform` (55,773 promises) |
+| `utf8n_quick_check` always YES | the sweep (17,274 wrong) and `t/conform` (173,358) |
+| `utf8n_quick_check` always MAYBE | `t/conform`'s requirement that all three answers occur at least once, and the sweep: 1,112,064 wrong |
+| range search off by one, `cp >= hi` | the sweep, 529 wrong, exactly one per range |
+| generator drops the Maybe closure | the generator refusing: `NFC_QC mismatch: Maybe only UCD [70597, ...]` |
+| generator packs Maybe as No | the sweep (132 wrong) and `t/conform`; NOT the header diff, which still says the header matches the generator, because it does |
+| generator shifts the No bits into the wrong form | the sweep, 16,034 wrong |
+| the ill-formed byte comparison deleted | **nothing, at first** |
+| the same check weakened to compare only the length | `t/unit`'s `F0 90 80 20` case, and 40 of 200,000 random windows |
+
+The ninth row is the one worth the section.  `utf8n_quick_check` re-encodes
+each codepoint and compares the bytes, which is how it notices that the input
+was ill-formed; deleting that comparison passed all 109 assertions.  The
+reason is granularity, not coverage.  The hostile-input oracle asks the
+question once about the whole 400kB buffer, and a buffer of random bytes that
+long certainly contains some codepoint with `NFx_QC=No`, so the answer is NO
+whether or not the ill-formed bytes were noticed.  `NormalizationTest.txt` is
+valid UTF-8 from end to end and the UCD's property is defined on codepoints,
+so neither external oracle can see this at all.
+
+Two things closed it.  Seventeen hand-written cases in `t/unit.c`, including
+`F0 90 80 20`, which consumes three bytes and yields U+FFFD -- exactly what
+three well-formed bytes of U+FFFD do, so a decoder that checks only the
+consumed length calls it well-formed.  And `t/nfx -r` now asks the same
+question of every 8-byte window of the random input, 50,000 of them, where
+1622 windows are all-ASCII and answer YES.  With the comparison deleted,
+193,060 of 200,000 window-form pairs break the promise.
+
+The lesson is the one about granularity.  A property asserted over a single
+large input can be true for a reason that has nothing to do with the code
+under test, and the fix is not more input but shorter input.
+
 ## Every oracle's exit status is now checked
 
 Each oracle used to run as `./t/conform ... 2>&1 | tee -a "$OUT"`, which
@@ -274,11 +353,13 @@ Stated plainly, because a README that only lists successes is not finished.
   so a streaming version is a real design, not a flag.
 - `realloc` failure is reported, and the program stops there.  `(size_t)-1` and nothing
   written.  No fixed-buffer mode, no caller-supplied allocator.
-- No quick-check fast path.  Already-NFC text is fully decomposed and
-  recomposed anyway, the single largest performance item here and is
-  deliberately absent: `NFC_QC`/`NFD_QC` from `DerivedNormalizationProps.txt`
-  would skip most real-world text, at the cost of a second code path that the
-  conformance file would mostly not exercise.
+- `utf8n_normalize` has no quick-check fast path yet.  The tables and
+  `utf8n_quick_check` exist and are checked against the UCD for every
+  codepoint, but nothing inside the library consults them: already-NFC text is
+  still fully decomposed, reordered and recomposed.  A caller who wants the
+  saving today has to ask `utf8n_quick_check` first and skip the call itself.
+  The skip-ahead path inside `utf8n_normalize` is the next commit in `PLAN.md`
+  and is where the measured numbers will go.
 - O(n^2) canonical ordering within a run of combining marks.  Fine for the
   runs that occur in text (the longest in the UCD's own test data is 4) and
   tested up to 2000 marks, but a crafted input of a million marks on one base
@@ -302,10 +383,10 @@ Stated plainly, because a README that only lists successes is not finished.
 - `utf8n_encode` silently substitutes U+FFFD for a surrogate or an
   out-of-range value instead of reporting the error.  A caller that wants to
   know its codepoint was invalid has to range-check first.
-- The committed table header is **261KB of C** (113KiB of `.rodata`, 115,760
+- The committed table header is **281KB of C** (119KiB of `.rodata`, 122,128
   bytes by `size -A`): 5982
   decomposition records, 6828 pool words, 422 combining-class ranges, 961
-  primary composites.  Justified because it is the whole UCD and no Latin-1-and-hope subset, and because the alternative, parsing
+  primary composites, 529 quick-check ranges.  Justified because it is the whole UCD and no Latin-1-and-hope subset, and because the alternative, parsing
   `UnicodeData.txt` at startup, makes a C library depend on a 2.2MB data file
   being installed and correct.  It compresses to about 40KB in git, and it is
   regenerated and diffed byte for byte by `make test`, so it cannot drift from
@@ -314,11 +395,12 @@ Stated plainly, because a README that only lists successes is not finished.
 ## Files
 
 ```
-utf8n.c            400 lines   the implementation
-utf8n.h             56 lines   the contract, including the ill-formed policy
-utf8n_table.h      261 KB      GENERATED -- do not edit
+utf8n.c            469 lines   the implementation
+utf8n.h             79 lines   the contract, including the ill-formed policy
+utf8n_table.h      281 KB      GENERATED -- do not edit
 tools/gen_tables.py           reads the UCD, derives and checks the exclusions
-t/run.sh                      builds and runs all four oracles, prints the score
+                              and the four quick-check properties
+t/run.sh                      builds and runs every oracle, prints the score
 t/conform.c                   NormalizationTest.txt
 t/unit.c                      assertions that need no downloaded data
 t/diff.py                     CPython differential with skew attribution

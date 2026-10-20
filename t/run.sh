@@ -51,6 +51,7 @@ fetch() { # fetch <version> <dir> <file>...
 conf_state='SKIPPED -- UCD not fetched'
 diff_state='SKIPPED -- UCD not fetched'
 gen_state='SKIPPED -- UCD not fetched'
+qc_state='SKIPPED -- t/diff.py did not run'
 
 printf '=== UCD %s (ours) vs %s (CPython)\n' "$UCD_VER" "$PY_VER"
 if fetch "$UCD_VER" ucd UnicodeData.txt CompositionExclusions.txt \
@@ -111,6 +112,14 @@ if [ "$PY_VER" != none ] && fetch "$PY_VER" "ucd-$PY_VER" UnicodeData.txt \
 	printf '\n--- oracle 3+4: CPython unicodedata and its UTF-8 decoder\n'
 	runq "t/diff.py" python3 t/diff.py ./t/nfx ucd "ucd-$PY_VER"
 	diff_state="ran against CPython UCD $PY_VER"
+	# The quick-check sweep lives in the same script but is not a CPython
+	# oracle: it compares every codepoint against the UCD's own NFx_QC.
+	# Take the whole line, "ok" or "not ok", so a failure cannot read as a
+	# skip -- and so an empty grep cannot read as a pass, which is the bug
+	# conf_state had.
+	if qc_line=$(grep 'quick check of every codepoint' "$OUT"); then
+		qc_state=$qc_line
+	fi
 fi
 
 # The committed header must be exactly what the generator produces from this
@@ -159,10 +168,11 @@ printf '\n=== oracles\n'
 printf '  1 NormalizationTest.txt   %s\n' "$conf_state"
 printf '  2 Full_Composition_Exclusion via tools/gen_tables.py  %s\n' "$gen_state"
 printf '  3 CPython unicodedata     %s\n' "$diff_state"
-printf '  4 unit assertions and hostile input   ran (no data needed)\n'
+printf '  4 NFx_QC in DerivedNormalizationProps.txt  %s\n' "$qc_state"
+printf '  5 unit assertions and hostile input   ran (no data needed)\n'
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-case "$conf_state$diff_state$gen_state" in
+case "$conf_state$diff_state$gen_state$qc_state" in
 *SKIPPED*)
 	printf 'WARNING: an external oracle did not run, so this score proves\n'
 	printf 'much less than a full run does.  Set UTF8N_REQUIRE_ORACLES=1 to\n'
