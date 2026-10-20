@@ -160,6 +160,14 @@ Ranked by how little we control them, strongest first.
       first, all three because truncation, well-formedness and overlapping
       buffers had only ever been checked on input where the fast path does
       nothing.
+- [x] the sanitizer must be watching a buffer the size of its data
+      why: t/nfx -r is the hostile-input mode and its slurp buffer grew by
+      doubling, so it was 512KB after reading 400KB and a planted read one
+      byte past the data produced zero ASan reports and a green suite.  This
+      is the eighth instance of the bug class METHOD.md records finding seven
+      times.  One realloc to the exact length fixes it;
+      -DUTF8N_PLANT_OVERREAD plus an exit-code-42 check under make test-asan
+      is what keeps it fixed, and deleting the realloc turns that case red.
 - [ ] resume the fast path after each slow segment
       why: it is one prefix today, so a single precomposed character a hundred
       bytes into a 2.2MB file costs the whole saving for the remaining 2.2MB

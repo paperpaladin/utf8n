@@ -197,9 +197,14 @@ static char *slurp(size_t *len)
 		if (got == 0)
 			break;
 	}
-	/* Trim to the exact length: a buffer rounded up to a power of two
-	 * hides a read past the end of the data from the sanitizer, which is
-	 * the whole point of running this mode under ASan. */
+	/* Trim to the exact length.  A buffer grown by doubling is 512KB after
+	 * reading 400KB, so a read one byte past the end of the data lands
+	 * 112KB inside a live allocation and no sanitizer says anything -- and
+	 * that is the buffer this whole mode exists to run untrusted bytes
+	 * through.  Before this realloc the planted over-read below produced
+	 * zero reports and the suite passed.  -DUTF8N_PLANT_OVERREAD is the
+	 * case that keeps it that way: t/run.sh builds a second binary with it
+	 * under the sanitizer and requires the run to be killed. */
 	in = realloc(in, n ? n : 1);
 	*len = n;
 	return in;
@@ -258,6 +263,13 @@ static int raw_mode(void)
 	if (!in)
 		return 2;
 
+#ifdef UTF8N_PLANT_OVERREAD
+	/* Deliberately one past the end.  Under -fsanitize=address this must
+	 * be fatal; if it is not, the buffer above is bigger than its data and
+	 * every other ASan result in this mode is worth less than it looks. */
+	if (n && in[n] == 0x55)
+		printf("# planted over-read read a 0x55\n");
+#endif
 	for (f = 0; f < 4; f++) {
 		size_t need = utf8n_normalize((enum utf8n_form)f, in, n, NULL, 0);
 		size_t got, again;
