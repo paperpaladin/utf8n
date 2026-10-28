@@ -403,14 +403,19 @@ Eight mutants:
 | truncation back-up deleted, so the prefix can be cut mid-codepoint | `t/unit`'s truncation cases |
 | the prefix copied BEFORE the input is read | `t/unit`'s overlapping-buffer case, with `out` two bytes after `in` |
 
-The last three were survivors first, and all three for the same reason: the
-properties they break were only ever checked on input where the fast path does
-nothing.  Truncation and well-formedness were checked against 400kB of random
-bytes, which is ill-formed, so the fast prefix there is always empty; in-place
-use was checked with `in == out`, where copying early writes the same bytes
-back to the same place and nothing notices.  The three new cases are
-already-normalised multi-byte strings, every `outcap` from 0 to the output
-length, and `out` at a different offset from `in` in both directions.
+None of the last three is caught by the suite as it stood before this commit,
+and all three for the same reason: the properties they break had only ever
+been checked on input where the fast path does nothing.  Truncation was
+checked against 400kB of random bytes, which is ill-formed, so the fast prefix
+there is always empty; in-place use was checked with `in == out`, where
+copying early writes the same bytes back to the same place and nothing
+notices.  Two of them were run first and found to survive, which is how the
+cases came to be written; the third, the early copy, was run afterwards with
+the new overlapping-buffer case deleted, and it passed 116 of 116 that way,
+so the claim is measured and not reasoned.  The three new groups of cases are
+already-normalised multi-byte strings at every `outcap` from 0 to the output
+length, `out` at a different offset from `in` in both directions, and one
+string whose copied length is counted.
 
 Only the shifted-forward direction catches the early-copy mutant, and the
 reason is worth keeping: with `out` before `in`, the prefix write lands
